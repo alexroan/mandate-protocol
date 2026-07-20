@@ -1,0 +1,315 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.35;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {IFixedMandateExecutor} from "./interfaces/IFixedMandateExecutor.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Signatures} from "./Signatures.sol";
+import {UnorderedNonces} from "./UnorderedNonces.sol";
+
+/// @notice Minimal immutable executor for recurring fixed-amount ERC-20 pull payments.
+/// @dev No owner, upgrade path, arbitrary calldata execution, or shared mutable protocol state.
+/// Token calls are limited to ERC-20 `transferFrom` using terms accepted by the payer and biller.
+contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces, Signatures {
+    using SafeERC20 for IERC20;
+
+    // "Mandate(address payer,address biller,address recipient,address settler,address token,uint256 payerGrossPerPayment,uint256 settlerFeePerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+    bytes32 private constant _MANDATE_TYPEHASH = 0xc31c98a8a242fcc0b7f2005f142ae33409ba8fca4e0b4f8c70c83e16240b3659;
+    // "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address settler,address token,uint256 payerGrossPerPayment,uint256 settlerFeePerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+    bytes32 private constant _MANDATE_AUTHORIZATION_TYPEHASH =
+        0x52f1bf25c166b9626ea58faf14c49363bd93da2a8e06b4db9ad5f7e4f0cead3b;
+    // "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address settler,address token,uint256 payerGrossPerPayment,uint256 settlerFeePerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+    bytes32 private constant _MANDATE_ACCEPTANCE_TYPEHASH =
+        0x142042dc77338bf80e77ece7d0e1c4b12592ba2009aadaebcc50aa61cb4f50b6;
+    // "Cancellation(bytes32 mandateId,address authorizer,uint256 nonce,uint256 signatureDeadline)"
+    bytes32 private constant _CANCELLATION_TYPEHASH =
+        0x11c57bb6a54f0e3ab0eada428058c7254168138845c71115231bfba8bbf010c8;
+
+    /// @inheritdoc IFixedMandateExecutor
+    mapping(bytes32 mandateId => MandateState state) public mandateStates;
+    /// @inheritdoc IFixedMandateExecutor
+    mapping(address authorizer => mapping(uint256 cancelNonce => bool used)) public cancellationNonceUsed;
+
+    constructor() EIP712("FixedMandateExecutor", "1") {}
+
+    // Open mandate
+
+    /// @inheritdoc IFixedMandateExecutor
+    function openMandate(
+        Mandate calldata mandate,
+        uint256 payerSignatureDeadline,
+        uint256 billerSignatureDeadline,
+        bytes calldata payerSignature,
+        bytes calldata billerSignature
+    ) external returns (bytes32 id) {
+        _validateMandate(mandate);
+        _verifyMandateAuthorization(mandate, payerSignatureDeadline, payerSignature);
+        _verifyMandateAcceptance(mandate, billerSignatureDeadline, billerSignature);
+        id = _openMandate(mandate);
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function openMandateAsPayer(
+        Mandate calldata mandate,
+        uint256 billerSignatureDeadline,
+        bytes calldata billerSignature
+    ) external returns (bytes32 id) {
+        if (mandate.payer != msg.sender) revert InvalidCaller();
+        _validateMandate(mandate);
+        _verifyMandateAcceptance(mandate, billerSignatureDeadline, billerSignature);
+        id = _openMandate(mandate);
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function openMandateAsBiller(
+        Mandate calldata mandate,
+        uint256 payerSignatureDeadline,
+        bytes calldata payerSignature
+    ) external returns (bytes32 id) {
+        if (mandate.biller != msg.sender) revert InvalidCaller();
+        _validateMandate(mandate);
+        _verifyMandateAuthorization(mandate, payerSignatureDeadline, payerSignature);
+        id = _openMandate(mandate);
+    }
+
+    function _validateMandate(Mandate calldata mandate) internal pure {
+        if (
+            mandate.payer == address(0) || mandate.biller == address(0) || mandate.recipient == address(0)
+                || mandate.token == address(0) || mandate.payerGrossPerPayment == 0 || mandate.periodLength == 0
+                || mandate.termsHash == bytes32(0) || mandate.settlerFeePerPayment >= mandate.payerGrossPerPayment
+                || (mandate.settler == mandate.biller && mandate.settlerFeePerPayment != 0)
+        ) revert InvalidMandate();
+    }
+
+    function _openMandate(Mandate calldata mandate) internal returns (bytes32 id) {
+        id = mandateId(mandate);
+        uint120 startedAt = uint120(block.timestamp);
+
+        // state modification block - reduces stack depth
+        {
+            MandateState storage state = mandateStates[id];
+            if (state.opened) revert MandateAlreadyOpened();
+            _useUnorderedNonce(mandate.payer, mandate.nonce);
+
+            state.opened = true;
+            state.startedAt = startedAt;
+        }
+
+        emit MandateOpened(
+            id,
+            mandate.payer,
+            mandate.biller,
+            mandate.token,
+            mandate.recipient,
+            mandate.settler,
+            mandate.payerGrossPerPayment,
+            mandate.settlerFeePerPayment,
+            mandate.periodLength,
+            mandate.totalPayments,
+            startedAt,
+            mandate.nonce,
+            mandate.termsHash
+        );
+    }
+
+    // Settle fixed payment
+
+    /// @inheritdoc IFixedMandateExecutor
+    function settle(Mandate calldata mandate, uint256 nextPaymentIndex) external {
+        bytes32 id = mandateId(mandate);
+        MandateState storage state = mandateStates[id];
+        if (!state.opened) revert MandateNotOpen();
+        if (state.cancelled) revert MandateCancelled();
+        if (msg.sender != mandate.biller && mandate.settler != address(0) && msg.sender != mandate.settler) {
+            revert InvalidSettler();
+        }
+
+        uint120 settledPaymentCount = state.settledPaymentCount;
+        if (nextPaymentIndex != settledPaymentCount) revert UnexpectedPaymentIndex();
+        if (nextPaymentIndex >= _unlockedPaymentCount(mandate, state.startedAt)) revert PaymentNotUnlocked();
+
+        state.settledPaymentCount = settledPaymentCount + 1;
+
+        uint256 fee = msg.sender == mandate.biller ? 0 : mandate.settlerFeePerPayment;
+
+        emit PaymentSettled(
+            id,
+            nextPaymentIndex,
+            mandate.payer,
+            mandate.biller,
+            mandate.recipient,
+            mandate.token,
+            mandate.payerGrossPerPayment,
+            fee,
+            msg.sender
+        );
+
+        if (fee == 0) {
+            IERC20(mandate.token).safeTransferFrom(mandate.payer, mandate.recipient, mandate.payerGrossPerPayment);
+        } else {
+            IERC20(mandate.token).safeTransferFrom(mandate.payer, mandate.recipient, mandate.payerGrossPerPayment - fee);
+            IERC20(mandate.token).safeTransferFrom(mandate.payer, msg.sender, fee);
+        }
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function unlockedPaymentCount(Mandate calldata mandate) external view returns (uint256 count) {
+        MandateState storage state = mandateStates[mandateId(mandate)];
+        if (!state.opened) revert MandateNotOpen();
+        if (state.cancelled) revert MandateCancelled();
+        return _unlockedPaymentCount(mandate, state.startedAt);
+    }
+
+    function _unlockedPaymentCount(Mandate calldata mandate, uint256 startedAt) internal view returns (uint256) {
+        uint256 elapsedPeriods = (block.timestamp - startedAt) / mandate.periodLength;
+        uint256 totalPayments = mandate.totalPayments;
+        if (totalPayments != 0 && elapsedPeriods >= totalPayments) return totalPayments;
+        if (elapsedPeriods >= type(uint256).max) return type(uint256).max;
+        return elapsedPeriods + 1;
+    }
+
+    // Cancel mandate
+
+    /// @inheritdoc IFixedMandateExecutor
+    function cancelMandateAsPayer(Mandate calldata mandate) external {
+        if (msg.sender != mandate.payer) revert InvalidCaller();
+        _cancel(mandateId(mandate), mandate.payer, mandate.payer);
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function cancelMandateAsBiller(Mandate calldata mandate) external {
+        if (msg.sender != mandate.biller) revert InvalidCaller();
+        _cancel(mandateId(mandate), mandate.payer, mandate.biller);
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function cancelMandateWithPayerSignature(
+        Mandate calldata mandate,
+        uint256 cancelNonce,
+        uint256 signatureDeadline,
+        bytes calldata payerSignature
+    ) external {
+        _cancelMandateWithSignature(mandate, mandate.payer, cancelNonce, signatureDeadline, payerSignature);
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function cancelMandateWithBillerSignature(
+        Mandate calldata mandate,
+        uint256 cancelNonce,
+        uint256 signatureDeadline,
+        bytes calldata billerSignature
+    ) external {
+        _cancelMandateWithSignature(mandate, mandate.biller, cancelNonce, signatureDeadline, billerSignature);
+    }
+
+    function _cancel(bytes32 id, address payer, address cancelledBy) internal {
+        MandateState storage state = mandateStates[id];
+        if (!state.opened) revert MandateNotOpen();
+        if (state.cancelled) revert MandateCancelled();
+        state.cancelled = true;
+        emit MandateCancellation(id, payer, cancelledBy);
+    }
+
+    function _cancelMandateWithSignature(
+        Mandate calldata mandate,
+        address authorizer,
+        uint256 cancelNonce,
+        uint256 signatureDeadline,
+        bytes calldata signature
+    ) internal {
+        if (block.timestamp > signatureDeadline) revert SignatureExpired();
+        if (cancellationNonceUsed[authorizer][cancelNonce]) revert InvalidCancellationNonce();
+        bytes32 id = mandateId(mandate);
+        bytes32 digest = hashCancellation(id, authorizer, cancelNonce, signatureDeadline);
+        if (!_isValidSignatureNow(authorizer, digest, signature)) revert InvalidSignature();
+        cancellationNonceUsed[authorizer][cancelNonce] = true;
+        _cancel(id, mandate.payer, authorizer);
+    }
+
+    // Typed-data and signature helpers
+
+    function _verifyMandateAuthorization(
+        Mandate calldata mandate,
+        uint256 signatureDeadline,
+        bytes calldata payerSignature
+    ) internal view {
+        if (block.timestamp > signatureDeadline) revert SignatureExpired();
+        if (!_isValidSignatureNow(mandate.payer, hashMandateAuthorization(mandate, signatureDeadline), payerSignature))
+        {
+            revert InvalidSignature();
+        }
+    }
+
+    function _verifyMandateAcceptance(
+        Mandate calldata mandate,
+        uint256 signatureDeadline,
+        bytes calldata billerSignature
+    ) internal view {
+        if (block.timestamp > signatureDeadline) revert SignatureExpired();
+        if (!_isValidSignatureNow(mandate.biller, hashMandateAcceptance(mandate, signatureDeadline), billerSignature)) {
+            revert InvalidSignature();
+        }
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function DOMAIN_SEPARATOR() external view returns (bytes32) {
+        return _domainSeparatorV4();
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function mandateId(Mandate calldata mandate) public view returns (bytes32 id) {
+        Mandate memory mandateMem = mandate;
+        return _hashTypedDataV4(_hashMandate(mandateMem));
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function hashMandateAuthorization(Mandate memory mandate, uint256 signatureDeadline)
+        public
+        view
+        returns (bytes32 digest)
+    {
+        return _hashTypedDataV4(
+            keccak256(abi.encode(_MANDATE_AUTHORIZATION_TYPEHASH, _hashMandate(mandate), signatureDeadline))
+        );
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function hashMandateAcceptance(Mandate memory mandate, uint256 signatureDeadline)
+        public
+        view
+        returns (bytes32 digest)
+    {
+        return _hashTypedDataV4(
+            keccak256(abi.encode(_MANDATE_ACCEPTANCE_TYPEHASH, _hashMandate(mandate), signatureDeadline))
+        );
+    }
+
+    /// @inheritdoc IFixedMandateExecutor
+    function hashCancellation(bytes32 id, address authorizer, uint256 nonce, uint256 signatureDeadline)
+        public
+        view
+        returns (bytes32 digest)
+    {
+        return _hashTypedDataV4(keccak256(abi.encode(_CANCELLATION_TYPEHASH, id, authorizer, nonce, signatureDeadline)));
+    }
+
+    function _hashMandate(Mandate memory mandate) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                _MANDATE_TYPEHASH,
+                mandate.payer,
+                mandate.biller,
+                mandate.recipient,
+                mandate.settler,
+                mandate.token,
+                mandate.payerGrossPerPayment,
+                mandate.settlerFeePerPayment,
+                mandate.periodLength,
+                mandate.totalPayments,
+                mandate.termsHash,
+                mandate.nonce
+            )
+        );
+    }
+}
