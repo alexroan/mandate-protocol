@@ -1,4 +1,4 @@
-# Fixed Mandate Executor Protocol
+# Fixed Mandate Protocol
 
 This document is the developer and agent guide for the implementation in this repository. It describes the protocol
 intent, contract architecture, public surface, state transitions, integration flows, indexing model, and security
@@ -9,10 +9,10 @@ reference implementation that exists today.
 
 ## Current Status
 
-`FixedMandateExecutor` is a Foundry reference implementation for wallet-native recurring payments over existing ERC-20
+`FixedMandate` is a Foundry reference implementation for wallet-native recurring payments over existing ERC-20
 allowances. It is one immutable shared spender deployed independently on each supported chain.
 
-The executor is intentionally small:
+The contract is intentionally small:
 
 - no owner, proxy, upgrade path, admin pause, or rescue path;
 - no custody or vault balances;
@@ -21,8 +21,8 @@ The executor is intentionally small:
 - token interactions are limited to ERC-20 `transferFrom` against the token address in the signed mandate; and
 - schedule state, EIP-712 domain separation, opening nonces, and cancellation nonces belong to this deployment.
 
-The implementation is [src/FixedMandateExecutor.sol](./src/FixedMandateExecutor.sol), and its public surface is
-[src/interfaces/IFixedMandateExecutor.sol](./src/interfaces/IFixedMandateExecutor.sol). Shared signature and nonce logic
+The implementation is [src/FixedMandate.sol](./src/FixedMandate.sol), and its public surface is
+[src/interfaces/IFixedMandate.sol](./src/interfaces/IFixedMandate.sol). Shared signature and nonce logic
 lives in [src/Signatures.sol](./src/Signatures.sol) and [src/UnorderedNonces.sol](./src/UnorderedNonces.sol).
 
 This is a prototype/reference implementation. It is not audited and should not be deployed with meaningful funds until
@@ -63,7 +63,7 @@ mandate is cancelled. Cancellation does not revoke the underlying token allowanc
 | Recipient | Address pinned by the mandate as the destination of payer gross minus any nominal external-settler fee. |
 | Settler | External settlement caller and nominal fee destination. A named settler restricts external settlement; zero permits any caller. |
 | Submitter | Any address that submits a relayed `openMandate`. It receives no party authority by doing so. |
-| Executor | Immutable onchain verifier, schedule state machine, and ERC-20 transfer coordinator. |
+| `FixedMandate` | Immutable onchain verifier, schedule state machine, and ERC-20 transfer coordinator. |
 | Token | ERC-20 address signed into the mandate. Economic guarantees assume standard transfer semantics. |
 | Wallet/indexer | Offchain software that prepares typed data, displays exposure, tracks events, and helps users cancel or revoke allowance. |
 
@@ -85,8 +85,8 @@ always waives `settlerFeePerPayment` and requests a full-gross transfer to the r
 | `cancelMandateWithPayerSignature` | Anyone | Cancel using payer typed authorization. |
 | `cancelMandateWithBillerSignature` | Anyone | Cancel using biller typed authorization. |
 | `invalidateUnorderedNonces` | Payer | OR a submitted mask into opening-nonce bits owned by the caller. |
-| `DOMAIN_SEPARATOR` | View | Return this executor's EIP-712 domain separator. |
-| `eip712Domain` | View | Return this executor's EIP-5267 domain fields. |
+| `DOMAIN_SEPARATOR` | View | Return this contract's EIP-712 domain separator. |
+| `eip712Domain` | View | Return this contract's EIP-5267 domain fields. |
 | `mandateId` | View | Return the EIP-712 fixed-mandate digest used as the state key. |
 | `hashMandateAuthorization` | View | Return the payer opening-authorization digest. |
 | `hashMandateAcceptance` | View | Return the biller opening-acceptance digest. |
@@ -143,7 +143,7 @@ Validation rules are:
 The contract intentionally permits other address relationships, including payer and biller being the same address, if
 the rules above hold.
 
-The `mandateId` is the EIP-712 digest of `Mandate` under this executor's domain. It is chain-specific and
+The `mandateId` is the EIP-712 digest of `Mandate` under this contract's domain. It is chain-specific and
 deployment-specific. The generated schedule start is deliberately absent from the signed struct.
 
 ### Fixed Mandate State
@@ -173,7 +173,7 @@ ceiling is not a payer-selected lifetime limit and must not be presented as spen
 
 ## Creation
 
-The executor exposes three creation routes over the same complete `Mandate`:
+`FixedMandate` exposes three creation routes over the same complete `Mandate`:
 
 ```solidity
 openMandate(mandate, payerSignatureDeadline, billerSignatureDeadline, payerSignature, billerSignature)
@@ -196,7 +196,7 @@ sequenceDiagram
     participant P as Payer
     participant B as Biller
     participant S as Submitter
-    participant E as FixedMandateExecutor
+    participant E as FixedMandate
     participant I as Indexer
 
     P->>B: Negotiate complete Mandate terms
@@ -220,26 +220,26 @@ sequenceDiagram
     E-->>I: Emit MandateOpened with complete terms and startedAt
 ```
 
-Opening does not check token balance or allowance. A mandate may open before the payer funds the account or approves the
-executor; settlement fails later if a required token transfer cannot execute.
+Opening does not check token balance or allowance. A mandate may open before the payer funds the account or approves
+`FixedMandate`; settlement fails later if a required token transfer cannot execute.
 
 Because `startedAt` is generated, a neutral holder of both signatures can choose when to seek inclusion while both
 signatures remain valid. The block producer supplies the confirmed block timestamp that becomes the anchor. A signature
 is valid at its exact deadline and expires once `block.timestamp > signatureDeadline`.
 
 All creation routes produce identical stored and event state. To distinguish which route was used, an indexer needs the
-selector of the executor call frame. The top-level transaction selector is sufficient only when the executor itself is
-called directly; smart-account and router calls require a trace or decoded nested execution.
+selector of the `FixedMandate` call frame. The top-level transaction selector is sufficient only when the contract
+itself is called directly; smart-account and router calls require a trace or decoded nested execution.
 
 ## Typed Data And Signatures
 
 The EIP-712 domain is:
 
 ```text
-name: FixedMandateExecutor
+name: FixedMandate
 version: 1
 chainId: current chain
-verifyingContract: deployed executor
+verifyingContract: deployed FixedMandate contract
 ```
 
 Typed objects are:
@@ -293,7 +293,7 @@ implementation limit documented above.
 ```mermaid
 sequenceDiagram
     participant C as Settlement caller
-    participant E as FixedMandateExecutor
+    participant E as FixedMandate
     participant I as Indexer
     participant T as ERC20
     participant P as Payer
@@ -324,7 +324,7 @@ The submitted index is optimistic concurrency control. It must equal `settledPay
 for the same index cannot both succeed. The first consumes the index; the stale transaction reverts. A biller and
 external settler can race, and a successful biller transaction records fee zero and can preempt the external reward.
 
-The executor follows checks, state effects, event emission, then token interactions. If a required token transfer
+`FixedMandate` follows checks, state effects, event emission, then token interactions. If a required token transfer
 reverts, the EVM rolls back the counter, event, transfers, and every nested effect.
 
 There is no reentrancy mutex. Because the count increments before token calls, a callback cannot replay the same index.
@@ -347,7 +347,7 @@ sequenceDiagram
     participant P as Payer
     participant B as Biller
     participant C as Submitter
-    participant E as FixedMandateExecutor
+    participant E as FixedMandate
     participant I as Indexer
 
     alt Direct payer cancellation
@@ -377,7 +377,7 @@ sequenceDiagram
 If signed cancellation later fails because the mandate is unopened or already cancelled, the nonce update rolls back
 with the transaction. The settler cannot cancel. Cancellation blocks both unlocked arrears and future occurrences, but
 it does not revoke ERC-20 allowance. Allowance revocation at the token is the broad emergency brake for all pulls from
-that payer for that token through this executor.
+that payer for that token through this `FixedMandate` deployment.
 
 ## Exact Fee Policy
 
@@ -478,12 +478,13 @@ Protocol events are the indexer boundary:
 | `MandateCancellation` | `mandateId`, `payer`, `cancelledBy` | Payer or biller authorized cancellation. |
 | `UnorderedNonceInvalidation` | `owner`, `wordPos` | Records the mask ORed into an owner's bitmap; `mask` is non-indexed and may be a no-op. |
 
-`EIP712DomainChanged` is inherited through `IERC5267`. The executor's domain is immutable, so this implementation never
+`EIP712DomainChanged` is inherited through `IERC5267`. The contract's domain is immutable, so this implementation never
 emits it.
 
 `MandateOpened` contains every `Mandate` field and the generated schedule anchor, so an event-only consumer can
 reconstruct the mandate without transaction calldata. Route provenance additionally requires the selector of the
-executor call frame; for smart-account or router transactions that may require a trace or decoded nested execution.
+`FixedMandate` call frame; for smart-account or router transactions that may require a trace or decoded nested
+execution.
 
 For settlement, the event is emitted after the counter increments and before token interactions. This makes logs from
 nested settlements appear in ascending `paymentIndex` order. Indexers may process that order directly, but should still
@@ -491,10 +492,10 @@ treat logs as final only after normal chain-confirmation policy. Any transfer re
 
 ## Trust And Security Model
 
-The executor is a shared spender. Token allowance remains live until the payer reduces or revokes it at the token
+`FixedMandate` is a shared spender. Token allowance remains live until the payer reduces or revokes it at the token
 contract.
 
-Under standard ERC-20 transfer semantics, the executor guarantees its own checks:
+Under standard ERC-20 transfer semantics, the contract guarantees its own checks:
 
 - payer and biller agreed to the same complete mandate before opening;
 - each direct route derives authority only from its corresponding `msg.sender` role;
@@ -509,7 +510,7 @@ Under standard ERC-20 transfer semantics, the executor guarantees its own checks
 - consuming state before token interactions prevents same-index callback replay; and
 - state changes and events roll back if any required token transfer fails.
 
-The executor does not measure token balance deltas. Its economic accounting assumes
+The contract does not measure token balance deltas. Its economic accounting assumes
 `transferFrom(from, to, amount)` debits exactly `amount` and credits exactly `amount`. It does not guarantee:
 
 - behavior of fee-on-transfer, rebasing, excessive-debit, pausable, blocklist, callback-heavy, malicious, or otherwise
@@ -535,7 +536,7 @@ occurrence, including unlocked backlog. For an open-ended mandate, choose a deli
 as needed.
 
 Cancellation stops one mandate; allowance revocation stops every pull from that payer for that token through this
-executor. Wallets and dashboards should display at least:
+`FixedMandate` deployment. Wallets and dashboards should display at least:
 
 - exact gross per payment;
 - currently unlocked but unpaid occurrence count and gross exposure;
@@ -543,11 +544,11 @@ executor. Wallets and dashboards should display at least:
 - remaining finite occurrences or the fact that the schedule is open-ended;
 - configured external-settler policy and fee;
 - cancellation state; and
-- current token allowance to the executor.
+- current token allowance to `FixedMandate`.
 
 ## Known Non-Goals
 
-The current executor does not implement:
+The current contract does not implement:
 
 - ERC-2612, Permit2, DAI permit, or other activation adapters;
 - arbitrary permit calldata execution;
@@ -565,7 +566,7 @@ These belong in periphery or product layers unless the core trust boundary is de
 ## Future Work
 
 Variable Mandate is future work. It will be designed from evidence and learnings gathered during a full-stack rollout
-of `FixedMandateExecutor`; no Variable Mandate design is specified here.
+of `FixedMandate`; no Variable Mandate design is specified here.
 
 ## Developer Workflow
 
@@ -593,12 +594,12 @@ Foundry version when regenerating snapshots.
 
 Before changing protocol behavior, update together as relevant:
 
-- [src/FixedMandateExecutor.sol](./src/FixedMandateExecutor.sol)
-- [src/interfaces/IFixedMandateExecutor.sol](./src/interfaces/IFixedMandateExecutor.sol)
+- [src/FixedMandate.sol](./src/FixedMandate.sol)
+- [src/interfaces/IFixedMandate.sol](./src/interfaces/IFixedMandate.sol)
 - [src/Signatures.sol](./src/Signatures.sol)
 - [src/UnorderedNonces.sol](./src/UnorderedNonces.sol)
-- [test/FixedMandateExecutor.t.sol](./test/FixedMandateExecutor.t.sol)
-- [test/FixedMandateExecutor.invariant.t.sol](./test/FixedMandateExecutor.invariant.t.sol)
+- [test/FixedMandate.t.sol](./test/FixedMandate.t.sol)
+- [test/FixedMandate.invariant.t.sol](./test/FixedMandate.invariant.t.sol)
 - [README.md](./README.md)
 - [WHITEPAPER-WIP.md](./WHITEPAPER-WIP.md)
 - this file

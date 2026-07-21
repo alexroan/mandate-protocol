@@ -1,4 +1,4 @@
-# Fixed Mandate Executor
+# Fixed Mandate
 
 Foundry reference implementation for exact recurring ERC-20 pull payments authorized when a fixed mandate opens.
 
@@ -8,13 +8,13 @@ For the protocol architecture, state machine, event model, and integration detai
 The core flow is:
 
 ```text
-payer grants ERC-20 allowance to FixedMandateExecutor
+payer grants ERC-20 allowance to FixedMandate
 payer authorizes exact recurring-payment terms with typed data
 biller accepts the same terms
 opening anchors the schedule and unlocks the first occurrence
 each elapsed period unlocks one more occurrence
 an eligible caller settles the next unlocked occurrence
-the executor enforces the signed recipient, amount, caller policy, fee, cancellation, and payment index
+FixedMandate enforces the signed recipient, amount, caller policy, fee, cancellation, and payment index
 ```
 
 ## Status
@@ -23,7 +23,7 @@ Prototype/reference implementation. It is **not audited** and should not be used
 
 Implemented:
 
-- immutable executor with no owner, proxy, upgrade path, custody, or arbitrary external calls
+- immutable `FixedMandate` contract with no owner, proxy, upgrade path, custody, or arbitrary external calls
 - any nonzero token address can be signed into a mandate as permissionless input
 - three mandate creation entrypoints:
   - `openMandate(...)`: any caller submits payer authorization and biller acceptance
@@ -76,7 +76,7 @@ currently accepts larger positive counts even though they cannot complete. Integ
 `type(uint120).max`; before production, the contract should enforce the bound or widen the counter. This implementation
 ceiling is not meaningful payer protection for an open-ended mandate.
 
-The `mandateId` is the EIP-712 digest of `Mandate` under the executor's domain, so it is chain- and
+The `mandateId` is the EIP-712 digest of `Mandate` under the `FixedMandate` domain, so it is chain- and
 deployment-specific. Payer authorization signs
 `MandateAuthorization(Mandate mandate,uint256 signatureDeadline)`, while biller acceptance signs
 `MandateAcceptance(Mandate mandate,uint256 signatureDeadline)`. Both wrappers commit to the complete fixed
@@ -97,7 +97,7 @@ may settle in rapid succession. A positive `totalPayments` caps the schedule; ze
 cancellation. Finite arrears remain collectible after the final scheduled unlock.
 
 The biller may always call `settle`. Otherwise, a nonzero `settler` restricts settlement to that address, while a zero
-`settler` permits any caller. For an eligible non-biller, the executor requests `gross - fee` to the recipient and the
+`settler` permits any caller. For an eligible non-biller, `FixedMandate` requests `gross - fee` to the recipient and the
 exact signed `settlerFeePerPayment` to the caller. A biller call waives the fee and requests one full-gross transfer to
 the recipient. These are nominal `transferFrom` amounts: if the payer is also a transfer destination, that self-transfer
 leg can consume allowance without producing the same net balance movement.
@@ -122,8 +122,8 @@ used cancellation nonces, and the current `unlockedPaymentCount`.
 `PaymentSettled` is emitted after its payment index is consumed but before token interactions. If a token callback
 settles another unlocked occurrence, logs for the mandate remain ordered by `paymentIndex`. Any later transfer failure
 reverts the entire call stack, including state changes and logs. Indexers that need to distinguish the three opening
-routes must inspect the selector of the executor call frame, using a trace or decoded smart-account/router execution
-when it is not the top-level transaction call. Their resulting mandate state is otherwise identical.
+routes must inspect the selector of the `FixedMandate` call frame, using a trace or decoded smart-account/router
+execution when it is not the top-level transaction call. Their resulting mandate state is otherwise identical.
 
 ## Development
 
@@ -157,7 +157,7 @@ Create `.env` from `.env.example`, then:
 
 ```bash
 source .env
-forge script script/DeployFixedMandateExecutor.s.sol:DeployFixedMandateExecutor \
+forge script script/DeployFixedMandate.s.sol:DeployFixedMandate \
   --rpc-url "$RPC_URL" \
   --private-key "$PRIVATE_KEY" \
   --broadcast
@@ -166,7 +166,7 @@ forge script script/DeployFixedMandateExecutor.s.sol:DeployFixedMandateExecutor 
 Add verifier flags only when the chain verifier is configured:
 
 ```bash
-forge script script/DeployFixedMandateExecutor.s.sol:DeployFixedMandateExecutor \
+forge script script/DeployFixedMandate.s.sol:DeployFixedMandate \
   --rpc-url "$RPC_URL" \
   --private-key "$PRIVATE_KEY" \
   --broadcast \
@@ -176,20 +176,20 @@ forge script script/DeployFixedMandateExecutor.s.sol:DeployFixedMandateExecutor 
 
 ## Security Notes
 
-The executor deliberately has **no token allowlist**. Any token address can be signed into a mandate as permissionless
+`FixedMandate` deliberately has **no token allowlist**. Any token address can be signed into a mandate as permissionless
 input. Settlement reverts if the token address has no code, but fee and gross guarantees assume standard ERC-20
 semantics: `transferFrom(from, to, amount)` debits exactly `amount` and credits exactly `amount`. Fee-on-transfer,
 rebasing, excessive-debit, pausable, blocklist, callback-heavy, and malicious tokens are outside the current economic
 guarantee boundary. The contract permits role addresses to overlap, so net proceeds and net payer outflow also depend
 on whether a transfer is a self-transfer.
 
-The executor has no reentrancy mutex. It consumes the current payment index before token interactions, preventing a
+`FixedMandate` has no reentrancy mutex. It consumes the current payment index before token interactions, preventing a
 same-index replay. On an open-settler mandate, a callback token can nevertheless settle another already-unlocked index
 and, when configured, receive that nested occurrence's fee. A token that is neither the biller nor the named settler
 cannot settle or receive a fee under a named-settler mandate. Every nested settlement still has to satisfy the caller,
 next-index, unlock, and finite-count rules, and all nested effects revert if the outer call fails.
 
-The executor is a shared ERC-20 spender. Users should approve finite amounts sized to expected exposure. For a finite
+`FixedMandate` is a shared ERC-20 spender. Users should approve finite amounts sized to expected exposure. For a finite
 mandate, allowance should cover unpaid occurrences, including any unlocked backlog. For an open-ended mandate, choose
 a deliberate runway budget and replenish it as needed rather than treating exposure as finite.
 
@@ -201,7 +201,7 @@ and immediate gross exposure, not only the per-payment amount.
 ## Future Work
 
 Variable Mandate is future work. It will be designed from evidence and learnings gathered during a full-stack rollout
-of `FixedMandateExecutor`; no Variable Mandate design is specified here.
+of `FixedMandate`; no Variable Mandate design is specified here.
 
 ## Design Pressure
 

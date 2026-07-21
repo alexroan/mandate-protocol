@@ -8,7 +8,7 @@ import {IUnorderedNonces} from "./IUnorderedNonces.sol";
 /// @notice Immutable ERC-20 pull-payment executor for bilateral fixed-amount mandates.
 /// @dev The executor is an independent shared ERC-20 spender. Opening sets the schedule start to the
 /// current block timestamp. Cancellation stops mandate settlement but does not revoke token allowance.
-interface IFixedMandateExecutor is IERC5267, IUnorderedNonces {
+interface IFixedMandate is IERC5267, IUnorderedNonces {
     /// @notice Fixed payment schedule authorized by a payer and accepted by a biller.
     /// @dev The EIP-712 digest of this struct under the executor domain is the mandate id. The schedule
     /// start is deliberately absent because the contract records it when the mandate opens.

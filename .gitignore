@@ -18,6 +18,3 @@ out/
 
 # Local coverage and generated visual artifacts
 lcov.info
-docs/fixed-mandate-executor-*.html
-docs/fixed-mandate-executor-*.png
-scripts/

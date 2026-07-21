@@ -3,7 +3,7 @@ pragma solidity 0.8.35;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import {IFixedMandateExecutor} from "./interfaces/IFixedMandateExecutor.sol";
+import {IFixedMandate} from "./interfaces/IFixedMandate.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Signatures} from "./Signatures.sol";
 import {UnorderedNonces} from "./UnorderedNonces.sol";
@@ -11,7 +11,7 @@ import {UnorderedNonces} from "./UnorderedNonces.sol";
 /// @notice Minimal immutable executor for recurring fixed-amount ERC-20 pull payments.
 /// @dev No owner, upgrade path, arbitrary calldata execution, or shared mutable protocol state.
 /// Token calls are limited to ERC-20 `transferFrom` using terms accepted by the payer and biller.
-contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces, Signatures {
+contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
     using SafeERC20 for IERC20;
 
     // "Mandate(address payer,address biller,address recipient,address settler,address token,uint256 payerGrossPerPayment,uint256 settlerFeePerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
@@ -26,16 +26,16 @@ contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces,
     bytes32 private constant _CANCELLATION_TYPEHASH =
         0x11c57bb6a54f0e3ab0eada428058c7254168138845c71115231bfba8bbf010c8;
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     mapping(bytes32 mandateId => MandateState state) public mandateStates;
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     mapping(address authorizer => mapping(uint256 cancelNonce => bool used)) public cancellationNonceUsed;
 
-    constructor() EIP712("FixedMandateExecutor", "1") {}
+    constructor() EIP712("FixedMandate", "1") {}
 
     // Open mandate
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function openMandate(
         Mandate calldata mandate,
         uint256 payerSignatureDeadline,
@@ -49,7 +49,7 @@ contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces,
         id = _openMandate(mandate);
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function openMandateAsPayer(
         Mandate calldata mandate,
         uint256 billerSignatureDeadline,
@@ -61,7 +61,7 @@ contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces,
         id = _openMandate(mandate);
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function openMandateAsBiller(
         Mandate calldata mandate,
         uint256 payerSignatureDeadline,
@@ -115,7 +115,7 @@ contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces,
 
     // Settle fixed payment
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function settle(Mandate calldata mandate, uint256 nextPaymentIndex) external {
         bytes32 id = mandateId(mandate);
         MandateState storage state = mandateStates[id];
@@ -153,7 +153,7 @@ contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces,
         }
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function unlockedPaymentCount(Mandate calldata mandate) external view returns (uint256 count) {
         MandateState storage state = mandateStates[mandateId(mandate)];
         if (!state.opened) revert MandateNotOpen();
@@ -171,19 +171,19 @@ contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces,
 
     // Cancel mandate
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function cancelMandateAsPayer(Mandate calldata mandate) external {
         if (msg.sender != mandate.payer) revert InvalidCaller();
         _cancel(mandateId(mandate), mandate.payer, mandate.payer);
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function cancelMandateAsBiller(Mandate calldata mandate) external {
         if (msg.sender != mandate.biller) revert InvalidCaller();
         _cancel(mandateId(mandate), mandate.payer, mandate.biller);
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function cancelMandateWithPayerSignature(
         Mandate calldata mandate,
         uint256 cancelNonce,
@@ -193,7 +193,7 @@ contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces,
         _cancelMandateWithSignature(mandate, mandate.payer, cancelNonce, signatureDeadline, payerSignature);
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function cancelMandateWithBillerSignature(
         Mandate calldata mandate,
         uint256 cancelNonce,
@@ -252,18 +252,18 @@ contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces,
         }
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function DOMAIN_SEPARATOR() external view returns (bytes32) {
         return _domainSeparatorV4();
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function mandateId(Mandate calldata mandate) public view returns (bytes32 id) {
         Mandate memory mandateMem = mandate;
         return _hashTypedDataV4(_hashMandate(mandateMem));
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function hashMandateAuthorization(Mandate memory mandate, uint256 signatureDeadline)
         public
         view
@@ -274,7 +274,7 @@ contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces,
         );
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function hashMandateAcceptance(Mandate memory mandate, uint256 signatureDeadline)
         public
         view
@@ -285,7 +285,7 @@ contract FixedMandateExecutor is IFixedMandateExecutor, EIP712, UnorderedNonces,
         );
     }
 
-    /// @inheritdoc IFixedMandateExecutor
+    /// @inheritdoc IFixedMandate
     function hashCancellation(bytes32 id, address authorizer, uint256 nonce, uint256 signatureDeadline)
         public
         view
