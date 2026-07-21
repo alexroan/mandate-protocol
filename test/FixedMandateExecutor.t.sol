@@ -156,9 +156,7 @@ contract FixedMandateTest is Test {
             "cancelMandateWithBillerSignature"
         );
         assertEq(IFixedMandate.mandateId.selector, bytes4(0xfbf1476c), "mandateId");
-        assertEq(
-            IFixedMandate.hashMandateAuthorization.selector, bytes4(0x8c268f01), "hashMandateAuthorization"
-        );
+        assertEq(IFixedMandate.hashMandateAuthorization.selector, bytes4(0x8c268f01), "hashMandateAuthorization");
         assertEq(IFixedMandate.hashMandateAcceptance.selector, bytes4(0x3caac3d0), "hashMandateAcceptance");
         assertEq(IFixedMandate.unlockedPaymentCount.selector, bytes4(0x67e947a9), "unlockedPaymentCount");
     }
@@ -568,8 +566,7 @@ contract FixedMandateTest is Test {
         mandate.payer = address(payerWallet);
         uint256 deadline = START + 1 hours;
         bytes memory billerSignature = _signAcceptance(billerPk, mandate, deadline);
-        bytes memory callData =
-            abi.encodeCall(IFixedMandate.openMandateAsPayer, (mandate, deadline, billerSignature));
+        bytes memory callData = abi.encodeCall(IFixedMandate.openMandateAsPayer, (mandate, deadline, billerSignature));
 
         vm.prank(payer);
         vm.startSnapshotGas("FixedMandate", "openMandateAsPayer.wallet.endToEnd");
@@ -1245,10 +1242,7 @@ contract FixedMandateTest is Test {
         });
     }
 
-    function _openMandate(IFixedMandate.Mandate memory mandate)
-        internal
-        returns (IFixedMandate.Mandate memory)
-    {
+    function _openMandate(IFixedMandate.Mandate memory mandate) internal returns (IFixedMandate.Mandate memory) {
         uint256 deadline = block.timestamp + 1 hours;
         executor.openMandate(
             mandate,
