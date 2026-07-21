@@ -1,4 +1,4 @@
-# Fixed Mandate Executor
+# Fixed Mandate
 
 ## Exact recurring ERC-20 pull payments over allowances
 
@@ -12,13 +12,13 @@ Stablecoins need a standard way to express recurring commercial relationships. E
 tokens, but they do not express who may collect, the exact amount and cadence, which recipient may receive funds, who
 may submit a payment, what fee that caller may earn, or when either commercial party has stopped the relationship.
 
-The Fixed Mandate Executor is an immutable allowance-based direct-debit primitive for exact recurring payments. A
+`FixedMandate` is an immutable allowance-based direct-debit primitive for exact recurring payments. A
 payer authorizes complete fixed terms and a biller accepts those same terms. Opening the mandate records the current
 block timestamp as its schedule anchor and makes payment index zero immediately collectible. One additional occurrence
 unlocks after each fixed-duration period. Each successful settlement consumes exactly the next index and pulls the
 exact nominal payer gross accepted at creation. Missed occurrences remain collectible in sequence.
 
-The executor does not custody funds, schedule transactions, guarantee balance or allowance, or adjudicate commercial
+The contract does not custody funds, schedule transactions, guarantee balance or allowance, or adjudicate commercial
 disputes. It moves ordinary ERC-20 tokens through `transferFrom` after enforcing mandate state. The design therefore
 inherits the ERC-20 allowance trust boundary and the economic behavior of the selected token. Its safety case depends
 on a small, immutable, no-admin contract, standard token behavior, bilateral terms, sequential state consumption,
@@ -52,13 +52,13 @@ Recurring stablecoin payments therefore tend to use one of several incomplete pa
 Each pattern can be appropriate. None turns an allowance over an ordinary ERC-20 into a portable, wallet-readable,
 bilaterally accepted fixed payment schedule.
 
-The Fixed Mandate Executor accepts the existing allowance model and adds those commercial semantics above it.
+`FixedMandate` accepts the existing allowance model and adds those commercial semantics above it.
 
 ## 2. Design thesis
 
-The executor separates three forms of authority that a raw approval collapses or omits.
+`FixedMandate` separates three forms of authority that a raw approval collapses or omits.
 
-The first is **token spending authority**. The payer grants ERC-20 allowance to the executor. The token remains the
+The first is **token spending authority**. The payer grants ERC-20 allowance to `FixedMandate`. The token remains the
 source of truth for whether `transferFrom` succeeds.
 
 The second is **mandate authority**. The payer authorizes the biller, token, recipient, exact gross amount, cadence,
@@ -83,8 +83,8 @@ payer mandate authority
 No new payer or biller signature is needed for each occurrence. That is possible because neither the settlement caller
 nor the biller can change the amount or schedule after opening. New commercial terms require a new mandate.
 
-The executor is not a wallet, custodian, merchant registry, scheduler, dispute court, or token standard. It is a narrow
-settlement primitive for exact recurring payments.
+`FixedMandate` is not a wallet, custodian, merchant registry, scheduler, dispute court, or token standard. It is a
+narrow settlement primitive for exact recurring payments.
 
 ## 3. Scope of this paper
 
@@ -120,7 +120,7 @@ backlog that could be collected immediately.
 The payer can authorize opening with an EIP-712 signature, an ERC-1271 contract signature, or a direct call from the
 payer address. A direct payer call replaces only the payer signature; biller acceptance is still required.
 
-Funds remain in the payer's normal token balance. The payer separately grants allowance to the executor and can revoke
+Funds remain in the payer's normal token balance. The payer separately grants allowance to `FixedMandate` and can revoke
 that allowance at the token layer.
 
 ### Biller
@@ -152,7 +152,7 @@ The mandate supports two external-caller policies:
 - `settler == address(0)`: any external caller may settle the next unlocked occurrence;
 - `settler != address(0)`: only that address may settle externally.
 
-The biller is independently authorized in both cases. For an eligible non-biller caller, the executor routes the exact
+The biller is independently authorized in both cases. For an eligible non-biller caller, `FixedMandate` routes the exact
 `settlerFeePerPayment` transfer accepted in the mandate to that caller. A caller gains no power to alter the payment by
 submitting it.
 
@@ -162,16 +162,16 @@ does not confer later settlement authority beyond the mandate's caller policy.
 ### Smart accounts and 7702-enabled EOAs
 
 Safes and other contract accounts can participate through ERC-1271 signatures or their own direct transactions. An
-ERC-4337 or EIP-7702 account can use its normal batching and sponsorship infrastructure around executor calls. The
-executor does not require a wallet-specific module.
+ERC-4337 or EIP-7702 account can use its normal batching and sponsorship infrastructure around `FixedMandate` calls.
+The contract does not require a wallet-specific module.
 
-This does not remove the executor allowance. In this design the executor remains the token spender and calls
-`transferFrom`.
+This does not remove the allowance granted to `FixedMandate`. In this design, the contract remains the token spender
+and calls `transferFrom`.
 
 ## 5. Design goals
 
 1. **No vault funding.** Funds remain in the payer's ordinary token balance.
-2. **One public spender.** The payer approves the immutable executor rather than every biller contract.
+2. **One public spender.** The payer approves the immutable `FixedMandate` contract rather than every biller contract.
 3. **Two-sided creation.** No active mandate exists without payer authority and biller acceptance over identical terms.
 4. **Relayed and direct opening.** Either party can call directly, or any relayer can submit both signatures.
 5. **Exact settlement.** Every occurrence uses the gross amount and fee accepted at creation.
@@ -191,11 +191,11 @@ This does not remove the executor allowance. In this design the executor remains
 4. **No settlement window.** Once an occurrence unlocks, it remains collectible until settlement or cancellation.
 5. **No automatic transaction scheduling.** An external actor must submit every settlement.
 6. **No built-in batch settlement.** Catch-up uses repeated one-occurrence calls.
-7. **No permit entrypoint.** The current executor neither accepts permit data nor makes arbitrary activation calls.
+7. **No permit entrypoint.** The current contract neither accepts permit data nor makes arbitrary activation calls.
 8. **No callbacks to application contracts.** The only external interactions are ERC-20 token transfers and signature
    validation required by ERC-1271.
 9. **No refunds or chargebacks.** Completed transfers are final at the contract layer.
-10. **No service adjudication.** The executor does not decide whether goods or services were delivered.
+10. **No service adjudication.** The contract does not decide whether goods or services were delivered.
 11. **No merchant certification.** Biller acceptance does not prove that the biller is trustworthy.
 12. **No onchain token allowlist.** Any token address in bilaterally accepted terms may be used; product support is a
     separate policy.
@@ -204,11 +204,11 @@ This does not remove the executor allowance. In this design the executor remains
 
 | Actor | Role | Trust boundary |
 |---|---|---|
-| Payer | Token holder that grants allowance and authorizes a mandate | Trusts executor code up to its remaining token allowance |
+| Payer | Token holder that grants allowance and authorizes a mandate | Trusts `FixedMandate` code up to its remaining token allowance |
 | Biller | Commercial counterparty that accepts the mandate | May directly collect only exact unlocked occurrences |
 | Recipient | Pinned address receiving settlement proceeds | May differ from the biller and cannot be changed after opening |
 | Settler | Open or named external transaction submitter | Can consume only the next unlocked index and is the destination of the exact accepted fee transfer |
-| Executor | Immutable shared ERC-20 spender and fixed schedule state machine | Must not transfer outside an opened mandate's rules |
+| `FixedMandate` | Immutable shared ERC-20 spender and fixed schedule state machine | Must not transfer outside an opened mandate's rules |
 | Token | Contract executing balance and allowance changes | Defines actual transfer semantics and may invoke callbacks |
 | Wallet/account | Presents terms, signs or calls, manages allowance, and exposes cancellation | Must make exact amount, cadence, backlog, and open-ended exposure legible |
 | Indexer | Reconstructs mandate lifecycle from state and successful logs | Mirrors onchain results and handles reorgs; does not define validity |
@@ -216,11 +216,11 @@ This does not remove the executor allowance. In this design the executor remains
 
 The biller and recipient are distinct concepts. The biller accepts the relationship and retains direct settlement
 authority. The recipient receives proceeds. The settler pays transaction gas and may receive a fee. Those addresses may
-be controlled by one organization, but the executor does not assume that they are.
+be controlled by one organization, but the contract does not assume that they are.
 
-The executor is a shared spender, not a custodian. A defect in its code can expose any allowance granted to it. This is
-why immutability, source verification, constrained external calls, rigorous testing, and conservative token support are
-part of the product's trust model.
+`FixedMandate` is a shared spender, not a custodian. A defect in its code can expose any allowance granted to it. This
+is why immutability, source verification, constrained external calls, rigorous testing, and conservative token support
+are part of the product's trust model.
 
 ## 8. Mechanism overview
 
@@ -234,7 +234,7 @@ A fixed settlement succeeds only when all of the following are true:
 6. a finite schedule has not exhausted its accepted count; and
 7. the selected token accepts the required `transferFrom` call or calls.
 
-The executor does not explicitly query balance and allowance before settlement. It relies on the token to accept or
+The contract does not explicitly query balance and allowance before settlement. It relies on the token to accept or
 reject `transferFrom`. A failed token call reverts the complete settlement.
 
 Index zero unlocks at opening. Missed occurrences are not assigned to separate settlement windows and do not expire.
@@ -249,7 +249,7 @@ The `Mandate` object binds:
 
 | Field | Meaning |
 |---|---|
-| `payer` | Token holder whose executor allowance may be spent |
+| `payer` | Token holder whose allowance to `FixedMandate` may be spent |
 | `biller` | Counterparty accepting the schedule and retaining direct settlement authority |
 | `recipient` | Pinned proceeds destination |
 | `settler` | Named external caller, or zero for open external settlement |
@@ -261,8 +261,8 @@ The `Mandate` object binds:
 | `termsHash` | Nonzero commitment to offchain commercial terms or metadata |
 | `nonce` | Payer unordered nonce used for uniqueness, replay protection, and pre-opening invalidation |
 
-The mandate digest is EIP-712 domain-separated by chain and executor deployment. Changing any field produces a different
-mandate identity.
+The mandate digest is EIP-712 domain-separated by chain and `FixedMandate` deployment. Changing any field produces a
+different mandate identity.
 
 The schedule start and signature deadlines are not mandate fields. The contract generates `startedAt` from
 `block.timestamp` when opening succeeds. Payer and biller authorization wrappers each carry their own submission
@@ -300,9 +300,9 @@ Either party may cancel an opened mandate:
 3. anyone submits an authorizer-bound payer cancellation signature; or
 4. anyone submits an authorizer-bound biller cancellation signature.
 
-Signed cancellation binds the mandate ID, authorizer address, cancellation nonce, deadline, chain, and executor. For
-distinct payer and biller addresses, the authorizer field prevents one party's authorization from being attributed to
-the other, including when two ERC-1271 wallets share an owner or validator.
+Signed cancellation binds the mandate ID, authorizer address, cancellation nonce, deadline, chain, and the
+`FixedMandate` deployment. For distinct payer and biller addresses, the authorizer field prevents one party's
+authorization from being attributed to the other, including when two ERC-1271 wallets share an owner or validator.
 
 Cancellation nonce state is scoped by authorizer. If payer and biller are the same address they necessarily share that
 address's nonce namespace. Direct cancellation does not consume a signed-cancellation nonce.
@@ -326,7 +326,7 @@ offchain terms
 
 ### Opening routes
 
-The reference executor exposes three routes:
+The reference implementation exposes three routes:
 
 | Route | Caller authority | Required counterparty authority |
 |---|---|---|
@@ -374,9 +374,9 @@ Nonce invalidation prevents a future open; it does not cancel a mandate that is 
 pre-opening nonce invalidation function. Biller acceptance instead has its signed deadline, and an opened mandate can be
 cancelled by either party.
 
-## 11. Executor state model
+## 11. `FixedMandate` state model
 
-For each mandate ID the executor stores:
+For each mandate ID the contract stores:
 
 | State | Purpose |
 |---|---|
@@ -395,16 +395,16 @@ record, or mutable schedule cursor beyond the settled count.
 
 ## 12. Allowance activation
 
-The executor needs token allowance before it can pull. The current contract has no permit-assisted opening or settlement
-entrypoint and makes no arbitrary activation call.
+`FixedMandate` needs token allowance before it can pull. The current contract has no permit-assisted opening or
+settlement entrypoint and makes no arbitrary activation call.
 
 For a token with compatible EIP-2612 support, the payer may submit a permit to the token separately. That still requires
-a permit signature distinct from mandate authorization. A smart account may batch its token approval and executor call
-through account infrastructure. Neither flow changes the executor's security model: the executor remains the approved
-spender.
+a permit signature distinct from mandate authorization. A smart account may batch its token approval and
+`FixedMandate` call through account infrastructure. Neither flow changes the contract's security model: `FixedMandate`
+remains the approved spender.
 
 Most token permit implementations cannot validate an ERC-1271 contract-wallet signature. A contract account therefore
-normally approves the executor through its own transaction execution path.
+normally approves `FixedMandate` through its own transaction execution path.
 
 The permit deadline, where permit is used externally, ordinarily limits submission of the permit. It does not cause the
 resulting ERC-20 allowance to expire.
@@ -469,7 +469,7 @@ final only after the whole transaction succeeds.
 
 ### Callback behavior
 
-The executor intentionally has no reentrancy mutex. A callback cannot replay the outer index because the count has
+The contract intentionally has no reentrancy mutex. A callback cannot replay the outer index because the count has
 already advanced. Every nested call must independently pass mandate, cancellation, caller, expected-index, unlock, and
 finite-count checks.
 
@@ -480,7 +480,7 @@ the number of unlocked occurrences, the accepted fixed terms, and token-call suc
 When a mandate names a settler, a token callback fails the caller check only when the token is neither the biller nor the
 named settler. It then consumes no occurrence and receives no fee. This is a settlement-caller property, not a general
 claim that callbacks are harmless. A token signed as the biller or named settler has that role's authority, and a
-malicious token can fabricate balance behavior outside the executor entirely.
+malicious token can fabricate balance behavior outside the contract entirely.
 
 Production integrations should use stablecoins with understood behavior and treat callback-heavy tokens as outside the
 supported economic boundary.
@@ -508,7 +508,7 @@ revocation is the broader emergency brake but has the same transaction-ordering 
 
 ## 14. Guarantees and non-guarantees
 
-Under standard ERC-20 transfer semantics, the executor guarantees:
+Under standard ERC-20 transfer semantics, `FixedMandate` guarantees:
 
 1. no opened mandate without payer authority and biller acceptance over identical fixed terms;
 2. no settlement for an unopened or cancelled mandate;
@@ -519,11 +519,11 @@ Under standard ERC-20 transfer semantics, the executor guarantees:
 7. an eligible non-biller caller is the destination of the exact accepted nominal fee transfer;
 8. direct biller settlement records and pays zero fee;
 9. failed token transfers do not advance the settled count or leave a settlement event;
-10. opening and cancellation signatures are domain-separated by chain and executor;
+10. opening and cancellation signatures are domain-separated by chain and `FixedMandate` deployment;
 11. cancellation signatures are bound to the payer or biller authorizer role; and
 12. no owner, proxy, or arbitrary call path can widen mandate authority.
 
-The executor does not guarantee:
+`FixedMandate` does not guarantee:
 
 1. payer balance or allowance;
 2. successful payment at an unlock time;
@@ -539,7 +539,7 @@ The executor does not guarantee:
 12. biller legitimacy beyond acceptance of the specific mandate.
 
 "Exact" amounts in the contract are nominal `transferFrom` arguments. A token can apply fees, rebase balances, lie
-about success, or implement other economics that make actual account deltas differ. The executor cannot repair a
+about success, or implement other economics that make actual account deltas differ. The contract cannot repair a
 malicious asset's accounting.
 
 ## 15. Allowance lifecycle
@@ -548,7 +548,7 @@ Mandate authority and ERC-20 allowance are separate controls:
 
 ```text
 Cancel fixed mandate: stops this payer-biller schedule.
-Revoke executor allowance: stops all FixedMandate pulls from this payer for this token.
+Revoke allowance to FixedMandate: stops all FixedMandate pulls from this payer for this token.
 ```
 
 Cancellation is precise. Allowance revocation is broad.
@@ -557,8 +557,8 @@ A payer may choose either:
 
 | Allowance posture | User meaning | Tradeoff |
 |---|---|---|
-| Standing executor approval | Approve the immutable executor once; bilateral mandates constrain later pulls | Lower friction; larger exposure if executor code is defective |
-| Bounded executor budget | Keep allowance near the aggregate intended runway | Lower allowance exposure; requires updates as runway is consumed |
+| Standing `FixedMandate` approval | Approve immutable `FixedMandate` once; bilateral mandates constrain later pulls | Lower friction; larger exposure if `FixedMandate` code is defective |
+| Bounded allowance budget | Keep allowance near the aggregate intended runway | Lower allowance exposure; requires updates as runway is consumed |
 
 For a finite mandate, a simple upper estimate of remaining nominal exposure is:
 
@@ -573,14 +573,14 @@ An open-ended mandate has no payer-selected finite remaining total. A wallet mus
 choose an allowance runway rather than describe the authorization as lifetime-bounded. Implementation ceilings are not
 spend protection.
 
-Cancelling mandates does not lower token allowance. A payer leaving the system should revoke executor allowance as a
-separate action.
+Cancelling mandates does not lower token allowance. A payer leaving the system should revoke its allowance to
+`FixedMandate` as a separate action.
 
 ## 16. Security model
 
-### Executor risk
+### `FixedMandate` risk
 
-The executor is a shared spender. Its launch posture requires:
+`FixedMandate` is a shared spender. Its launch posture requires:
 
 - immutable deployment;
 - no owner or upgrade proxy;
@@ -597,14 +597,14 @@ The executor is a shared spender. Its launch posture requires:
 ### Signature risk
 
 Opening signatures bind every commercial term, the payer nonce, a role-specific typed-data wrapper, a deadline, chain
-context, and executor deployment. Cancellation signatures additionally bind the authorizer role and their cancellation
-nonce.
+context, and `FixedMandate` deployment. Cancellation signatures additionally bind the authorizer role and their
+cancellation nonce.
 
 Contract addresses are validated exclusively through ERC-1271. An ECDSA signature by a contract wallet's owner is not
 accepted as a substitute for the wallet's own ERC-1271 policy. EOA validation supports ordinary and compact signatures.
 
-Applications must render chain, executor, parties, token, amount, cadence, count, recipient, settler, fee, terms
-commitment, nonce, and deadline before signing.
+Applications must render chain, `FixedMandate` address, parties, token, amount, cadence, count, recipient, settler, fee,
+terms commitment, nonce, and deadline before signing.
 
 ### Schedule-anchor risk
 
@@ -620,7 +620,7 @@ all tokens economically supported.
 
 Initial product integrations should constrain their asset list offchain to reviewed stablecoins. No-return tokens may
 work through safe transfer handling, while false-return and non-contract token addresses revert. Fee-on-transfer,
-rebasing, callback-heavy, blacklisting, pausable, or dishonest tokens create risks the executor cannot normalize.
+rebasing, callback-heavy, blacklisting, pausable, or dishonest tokens create risks the contract cannot normalize.
 
 The absence of a reentrancy guard is deliberate and must remain visible in audit and product documentation. Sequential
 state prevents same-index replay; it does not prohibit independently valid nested settlement of another unlocked index
@@ -628,7 +628,7 @@ under open caller policy.
 
 ### Time, ordering, and chain risk
 
-The executor uses `block.timestamp`. Small validator-controlled timestamp variance should be considered at unlock
+`FixedMandate` uses `block.timestamp`. Small validator-controlled timestamp variance should be considered at unlock
 boundaries. Cadence is duration-based, not calendar-aware.
 
 Settlement, cancellation, allowance revocation, and nonce invalidation take effect according to onchain ordering.
@@ -651,7 +651,7 @@ transaction succeeds. This ordering ensures that a successful nested settlement 
 An indexer should use at least:
 
 ```text
-(chain ID, executor address, mandate ID, payment index)
+(chain ID, FixedMandate address, mandate ID, payment index)
 ```
 
 as a settlement identity, and order confirmed logs by block, transaction, and log position. It should verify that
@@ -695,7 +695,7 @@ offchain. `termsHash` can commit to a canonical representation, but the contract
 
 ## 19. Comparison
 
-| Mechanism | What it gives | What it lacks relative to FixedMandate |
+| Mechanism | What it gives | What it lacks relative to Fixed Mandate |
 |---|---|---|
 | Raw ERC-20 approval | Spender authorization | No bilateral schedule, recipient pinning, sequential unlock, or mandate cancellation |
 | EIP-2612 permit | Signature-based approval | Creates allowance but no recurring payment state |
@@ -703,10 +703,10 @@ offchain. `termsHash` can commit to a canonical representation, but the contract
 | EIP-3009 | Signed one-shot token transfer | Requires new authority for later transfers and stores no bilateral fixed schedule |
 | Prepaid vault | Isolated funded budget | Requires custody or explicit top-ups |
 | Account-native policy | Wallet-enforced spending rules | Requires account-specific installation and a separate implementation surface |
-| FixedMandate | Bilateral exact schedules over ordinary ERC-20 allowance | Requires executor allowance and external settlement automation |
+| Fixed Mandate | Bilateral exact schedules over ordinary ERC-20 allowance | Requires allowance to `FixedMandate` and external settlement automation |
 
 The trust shape is Permit2-like: users approve a shared public spender and later operations are constrained by signed
-policy. The purpose is different. The Fixed Mandate Executor standardizes a bilaterally accepted, cancellable, exact
+policy. The purpose is different. `FixedMandate` standardizes a bilaterally accepted, cancellable, exact
 recurring schedule and its time accounting.
 
 ## 20. Initial implementation scope
@@ -728,7 +728,7 @@ The reference implementation includes:
 - lifecycle events and read helpers; and
 - safe ERC-20 call handling within the documented token boundary.
 
-Not included in the executor:
+Not included in `FixedMandate`:
 
 - permit or Permit2 activation adapters;
 - arbitrary permit calldata;
@@ -748,7 +748,7 @@ Not included in the executor:
 Public opening calldata, events, storage, settlement calls, and token transfers expose substantial metadata. Depending on
 the route, observers can learn or infer:
 
-- payer, biller, recipient, settler, and executor addresses;
+- payer, biller, recipient, and settler addresses, plus the `FixedMandate` deployment address;
 - token, exact gross, exact fee, cadence, and schedule size;
 - payer nonce, terms commitment, generated start, and payment index;
 - authorization deadlines and submitted signatures; and
@@ -814,12 +814,12 @@ logs.
 ## 23. Future work
 
 Variable Mandate is future work. Its requirements and design will be informed by evidence from a full-stack rollout of
-the Fixed Mandate Executor, including payer, biller, wallet, settler, indexing, support, and operational experience.
+`FixedMandate`, including payer, biller, wallet, settler, indexing, support, and operational experience.
 This paper does not propose its mechanism.
 
 ## 24. Why this is worth building
 
-The Fixed Mandate Executor does not remove ERC-20 allowance risk. It gives that risk a precise commercial shape.
+`FixedMandate` does not remove ERC-20 allowance risk. It gives that risk a precise commercial shape.
 
 The difficult part of an exact recurring stablecoin payment is not moving tokens. It is expressing a standing schedule
 that payer, biller, wallet, settler, indexer, and support systems can all interpret the same way. Bilateral creation,
