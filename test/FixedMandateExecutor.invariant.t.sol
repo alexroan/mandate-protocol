@@ -3,21 +3,21 @@ pragma solidity ^0.8.24;
 
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Test} from "forge-std/Test.sol";
-import {FixedMandateExecutor} from "../src/FixedMandateExecutor.sol";
-import {IFixedMandateExecutor} from "../src/interfaces/IFixedMandateExecutor.sol";
+import {FixedMandate} from "../src/FixedMandate.sol";
+import {IFixedMandate} from "../src/interfaces/IFixedMandate.sol";
 import {MockERC20} from "./helpers/MandateMocks.sol";
 
 contract FixedMandateHandler is Test {
-    FixedMandateExecutor public immutable executor;
+    FixedMandate public immutable executor;
     MockERC20 public immutable token;
 
-    IFixedMandateExecutor.Mandate internal mandate;
+    IFixedMandate.Mandate internal mandate;
     uint256 public immutable initialPayerBalance;
     uint256 public ghostSuccessfulSettlements;
     uint256 public ghostCancelledAtCount = type(uint256).max;
     uint256 public ghostUnexpectedSuccesses;
 
-    constructor(FixedMandateExecutor executor_, MockERC20 token_, IFixedMandateExecutor.Mandate memory mandate_) {
+    constructor(FixedMandate executor_, MockERC20 token_, IFixedMandate.Mandate memory mandate_) {
         executor = executor_;
         token = token_;
         mandate = mandate_;
@@ -111,16 +111,16 @@ contract FixedMandateHandler is Test {
         }
     }
 
-    function configuredMandate() external view returns (IFixedMandateExecutor.Mandate memory) {
+    function configuredMandate() external view returns (IFixedMandate.Mandate memory) {
         return mandate;
     }
 }
 
 abstract contract FixedMandateInvariantBase is StdInvariant, Test {
-    FixedMandateExecutor internal executor;
+    FixedMandate internal executor;
     MockERC20 internal token;
     FixedMandateHandler internal handler;
-    IFixedMandateExecutor.Mandate internal mandate;
+    IFixedMandate.Mandate internal mandate;
 
     uint256 internal payerPk = 0xA11CE;
     uint256 internal billerPk = 0xB0B;
@@ -137,11 +137,11 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
     function _setUpInvariant(uint256 totalPayments, bool includeCancellation) internal {
         payer = vm.addr(payerPk);
         biller = vm.addr(billerPk);
-        executor = new FixedMandateExecutor();
+        executor = new FixedMandate();
         token = new MockERC20();
         vm.warp(START);
 
-        mandate = IFixedMandateExecutor.Mandate({
+        mandate = IFixedMandate.Mandate({
             payer: payer,
             biller: biller,
             recipient: recipient,

@@ -89,7 +89,7 @@ settlement primitive for exact recurring payments.
 ## 3. Scope of this paper
 
 This paper describes the semantics, implementation boundary, full-stack responsibilities, risks, observable records,
-and validation requirements of the current `FixedMandateExecutor` reference implementation.
+and validation requirements of the current `FixedMandate` reference implementation.
 
 The Solidity interfaces remain the source of truth for exact calldata, event parameters, storage types, and error
 selectors. This paper focuses on the behavior that wallets, billers, settlers, indexers, operators, and auditors need to
@@ -548,7 +548,7 @@ Mandate authority and ERC-20 allowance are separate controls:
 
 ```text
 Cancel fixed mandate: stops this payer-biller schedule.
-Revoke executor allowance: stops all FixedMandateExecutor pulls from this payer for this token.
+Revoke executor allowance: stops all FixedMandate pulls from this payer for this token.
 ```
 
 Cancellation is precise. Allowance revocation is broad.
@@ -695,7 +695,7 @@ offchain. `termsHash` can commit to a canonical representation, but the contract
 
 ## 19. Comparison
 
-| Mechanism | What it gives | What it lacks relative to FixedMandateExecutor |
+| Mechanism | What it gives | What it lacks relative to FixedMandate |
 |---|---|---|
 | Raw ERC-20 approval | Spender authorization | No bilateral schedule, recipient pinning, sequential unlock, or mandate cancellation |
 | EIP-2612 permit | Signature-based approval | Creates allowance but no recurring payment state |
@@ -703,7 +703,7 @@ offchain. `termsHash` can commit to a canonical representation, but the contract
 | EIP-3009 | Signed one-shot token transfer | Requires new authority for later transfers and stores no bilateral fixed schedule |
 | Prepaid vault | Isolated funded budget | Requires custody or explicit top-ups |
 | Account-native policy | Wallet-enforced spending rules | Requires account-specific installation and a separate implementation surface |
-| FixedMandateExecutor | Bilateral exact schedules over ordinary ERC-20 allowance | Requires executor allowance and external settlement automation |
+| FixedMandate | Bilateral exact schedules over ordinary ERC-20 allowance | Requires executor allowance and external settlement automation |
 
 The trust shape is Permit2-like: users approve a shared public spender and later operations are constrained by signed
 policy. The purpose is different. The Fixed Mandate Executor standardizes a bilaterally accepted, cancellable, exact
@@ -713,7 +713,7 @@ recurring schedule and its time accounting.
 
 The reference implementation includes:
 
-- immutable, no-admin `FixedMandateExecutor` deployment logic;
+- immutable, no-admin `FixedMandate` deployment logic;
 - EIP-712 payer authorization and biller acceptance;
 - EOA, EIP-2098, normalized recovery-ID, and ERC-1271 signature handling;
 - neutral-relay, direct-payer, and direct-biller opening;

@@ -9,7 +9,7 @@ reference implementation that exists today.
 
 ## Current Status
 
-`FixedMandateExecutor` is a Foundry reference implementation for wallet-native recurring payments over existing ERC-20
+`FixedMandate` is a Foundry reference implementation for wallet-native recurring payments over existing ERC-20
 allowances. It is one immutable shared spender deployed independently on each supported chain.
 
 The executor is intentionally small:
@@ -21,8 +21,8 @@ The executor is intentionally small:
 - token interactions are limited to ERC-20 `transferFrom` against the token address in the signed mandate; and
 - schedule state, EIP-712 domain separation, opening nonces, and cancellation nonces belong to this deployment.
 
-The implementation is [src/FixedMandateExecutor.sol](./src/FixedMandateExecutor.sol), and its public surface is
-[src/interfaces/IFixedMandateExecutor.sol](./src/interfaces/IFixedMandateExecutor.sol). Shared signature and nonce logic
+The implementation is [src/FixedMandate.sol](./src/FixedMandate.sol), and its public surface is
+[src/interfaces/IFixedMandate.sol](./src/interfaces/IFixedMandate.sol). Shared signature and nonce logic
 lives in [src/Signatures.sol](./src/Signatures.sol) and [src/UnorderedNonces.sol](./src/UnorderedNonces.sol).
 
 This is a prototype/reference implementation. It is not audited and should not be deployed with meaningful funds until
@@ -196,7 +196,7 @@ sequenceDiagram
     participant P as Payer
     participant B as Biller
     participant S as Submitter
-    participant E as FixedMandateExecutor
+    participant E as FixedMandate
     participant I as Indexer
 
     P->>B: Negotiate complete Mandate terms
@@ -236,7 +236,7 @@ called directly; smart-account and router calls require a trace or decoded neste
 The EIP-712 domain is:
 
 ```text
-name: FixedMandateExecutor
+name: FixedMandate
 version: 1
 chainId: current chain
 verifyingContract: deployed executor
@@ -293,7 +293,7 @@ implementation limit documented above.
 ```mermaid
 sequenceDiagram
     participant C as Settlement caller
-    participant E as FixedMandateExecutor
+    participant E as FixedMandate
     participant I as Indexer
     participant T as ERC20
     participant P as Payer
@@ -347,7 +347,7 @@ sequenceDiagram
     participant P as Payer
     participant B as Biller
     participant C as Submitter
-    participant E as FixedMandateExecutor
+    participant E as FixedMandate
     participant I as Indexer
 
     alt Direct payer cancellation
@@ -565,7 +565,7 @@ These belong in periphery or product layers unless the core trust boundary is de
 ## Future Work
 
 Variable Mandate is future work. It will be designed from evidence and learnings gathered during a full-stack rollout
-of `FixedMandateExecutor`; no Variable Mandate design is specified here.
+of `FixedMandate`; no Variable Mandate design is specified here.
 
 ## Developer Workflow
 
@@ -593,12 +593,12 @@ Foundry version when regenerating snapshots.
 
 Before changing protocol behavior, update together as relevant:
 
-- [src/FixedMandateExecutor.sol](./src/FixedMandateExecutor.sol)
-- [src/interfaces/IFixedMandateExecutor.sol](./src/interfaces/IFixedMandateExecutor.sol)
+- [src/FixedMandate.sol](./src/FixedMandate.sol)
+- [src/interfaces/IFixedMandate.sol](./src/interfaces/IFixedMandate.sol)
 - [src/Signatures.sol](./src/Signatures.sol)
 - [src/UnorderedNonces.sol](./src/UnorderedNonces.sol)
-- [test/FixedMandateExecutor.t.sol](./test/FixedMandateExecutor.t.sol)
-- [test/FixedMandateExecutor.invariant.t.sol](./test/FixedMandateExecutor.invariant.t.sol)
+- [test/FixedMandate.t.sol](./test/FixedMandate.t.sol)
+- [test/FixedMandate.invariant.t.sol](./test/FixedMandate.invariant.t.sol)
 - [README.md](./README.md)
 - [WHITEPAPER-WIP.md](./WHITEPAPER-WIP.md)
 - this file

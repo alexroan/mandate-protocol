@@ -8,7 +8,7 @@ For the protocol architecture, state machine, event model, and integration detai
 The core flow is:
 
 ```text
-payer grants ERC-20 allowance to FixedMandateExecutor
+payer grants ERC-20 allowance to FixedMandate
 payer authorizes exact recurring-payment terms with typed data
 biller accepts the same terms
 opening anchors the schedule and unlocks the first occurrence
@@ -157,7 +157,7 @@ Create `.env` from `.env.example`, then:
 
 ```bash
 source .env
-forge script script/DeployFixedMandateExecutor.s.sol:DeployFixedMandateExecutor \
+forge script script/DeployFixedMandate.s.sol:DeployFixedMandate \
   --rpc-url "$RPC_URL" \
   --private-key "$PRIVATE_KEY" \
   --broadcast
@@ -166,7 +166,7 @@ forge script script/DeployFixedMandateExecutor.s.sol:DeployFixedMandateExecutor 
 Add verifier flags only when the chain verifier is configured:
 
 ```bash
-forge script script/DeployFixedMandateExecutor.s.sol:DeployFixedMandateExecutor \
+forge script script/DeployFixedMandate.s.sol:DeployFixedMandate \
   --rpc-url "$RPC_URL" \
   --private-key "$PRIVATE_KEY" \
   --broadcast \
@@ -201,7 +201,7 @@ and immediate gross exposure, not only the per-payment amount.
 ## Future Work
 
 Variable Mandate is future work. It will be designed from evidence and learnings gathered during a full-stack rollout
-of `FixedMandateExecutor`; no Variable Mandate design is specified here.
+of `FixedMandate`; no Variable Mandate design is specified here.
 
 ## Design Pressure
 
