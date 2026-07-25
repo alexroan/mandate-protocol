@@ -14,14 +14,14 @@ import {UnorderedNonces} from "./UnorderedNonces.sol";
 contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
     using SafeERC20 for IERC20;
 
-    // "Mandate(address payer,address biller,address recipient,address settler,address token,uint256 payerGrossPerPayment,uint256 settlerFeePerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
-    bytes32 private constant _MANDATE_TYPEHASH = 0xc31c98a8a242fcc0b7f2005f142ae33409ba8fca4e0b4f8c70c83e16240b3659;
-    // "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address settler,address token,uint256 payerGrossPerPayment,uint256 settlerFeePerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+    // "Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+    bytes32 private constant _MANDATE_TYPEHASH = 0x2cb7e3a6ce71ea54f5b22fa6a91ad500901576ca2e0bb109f23a0000ed803418;
+    // "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
     bytes32 private constant _MANDATE_AUTHORIZATION_TYPEHASH =
-        0x52f1bf25c166b9626ea58faf14c49363bd93da2a8e06b4db9ad5f7e4f0cead3b;
-    // "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address settler,address token,uint256 payerGrossPerPayment,uint256 settlerFeePerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+        0xf9d6fb0adbc3b16b07a472bbfadd3bebbd4c55774935ad15d79ec25e3b656fc2;
+    // "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
     bytes32 private constant _MANDATE_ACCEPTANCE_TYPEHASH =
-        0x142042dc77338bf80e77ece7d0e1c4b12592ba2009aadaebcc50aa61cb4f50b6;
+        0xe2b64c471e9c56916489f2a1e58382e9d165717620a0a17467ade21ee66f3752;
     // "Cancellation(bytes32 mandateId,address authorizer,uint256 nonce,uint256 signatureDeadline)"
     bytes32 private constant _CANCELLATION_TYPEHASH =
         0x11c57bb6a54f0e3ab0eada428058c7254168138845c71115231bfba8bbf010c8;
@@ -76,9 +76,8 @@ contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
     function _validateMandate(Mandate calldata mandate) internal pure {
         if (
             mandate.payer == address(0) || mandate.biller == address(0) || mandate.recipient == address(0)
-                || mandate.token == address(0) || mandate.payerGrossPerPayment == 0 || mandate.periodLength == 0
-                || mandate.termsHash == bytes32(0) || mandate.settlerFeePerPayment >= mandate.payerGrossPerPayment
-                || (mandate.settler == mandate.biller && mandate.settlerFeePerPayment != 0)
+                || mandate.token == address(0) || mandate.amountPerPayment == 0 || mandate.periodLength == 0
+                || mandate.termsHash == bytes32(0)
         ) revert InvalidMandate();
     }
 
@@ -102,9 +101,7 @@ contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
             mandate.biller,
             mandate.token,
             mandate.recipient,
-            mandate.settler,
-            mandate.payerGrossPerPayment,
-            mandate.settlerFeePerPayment,
+            mandate.amountPerPayment,
             mandate.periodLength,
             mandate.totalPayments,
             startedAt,
@@ -121,17 +118,12 @@ contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
         MandateState storage state = mandateStates[id];
         if (!state.opened) revert MandateNotOpen();
         if (state.cancelled) revert MandateCancelled();
-        if (msg.sender != mandate.biller && mandate.settler != address(0) && msg.sender != mandate.settler) {
-            revert InvalidSettler();
-        }
 
         uint120 settledPaymentCount = state.settledPaymentCount;
         if (nextPaymentIndex != settledPaymentCount) revert UnexpectedPaymentIndex();
         if (nextPaymentIndex >= _unlockedPaymentCount(mandate, state.startedAt)) revert PaymentNotUnlocked();
 
         state.settledPaymentCount = settledPaymentCount + 1;
-
-        uint256 fee = msg.sender == mandate.biller ? 0 : mandate.settlerFeePerPayment;
 
         emit PaymentSettled(
             id,
@@ -140,17 +132,11 @@ contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
             mandate.biller,
             mandate.recipient,
             mandate.token,
-            mandate.payerGrossPerPayment,
-            fee,
+            mandate.amountPerPayment,
             msg.sender
         );
 
-        if (fee == 0) {
-            IERC20(mandate.token).safeTransferFrom(mandate.payer, mandate.recipient, mandate.payerGrossPerPayment);
-        } else {
-            IERC20(mandate.token).safeTransferFrom(mandate.payer, mandate.recipient, mandate.payerGrossPerPayment - fee);
-            IERC20(mandate.token).safeTransferFrom(mandate.payer, msg.sender, fee);
-        }
+        IERC20(mandate.token).safeTransferFrom(mandate.payer, mandate.recipient, mandate.amountPerPayment);
     }
 
     /// @inheritdoc IFixedMandate
@@ -301,10 +287,8 @@ contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
                 mandate.payer,
                 mandate.biller,
                 mandate.recipient,
-                mandate.settler,
                 mandate.token,
-                mandate.payerGrossPerPayment,
-                mandate.settlerFeePerPayment,
+                mandate.amountPerPayment,
                 mandate.periodLength,
                 mandate.totalPayments,
                 mandate.termsHash,

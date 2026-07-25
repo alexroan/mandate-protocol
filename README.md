@@ -13,8 +13,9 @@ payer authorizes exact recurring-payment terms with typed data
 biller accepts the same terms
 opening anchors the schedule and unlocks the first occurrence
 each elapsed period unlocks one more occurrence
-an eligible caller settles the next unlocked occurrence
-FixedMandate enforces the signed recipient, amount, caller policy, fee, cancellation, and payment index
+any address may submit settlement for the exact next unlocked occurrence
+FixedMandate enforces the opened and uncancelled schedule, pinned token and recipient, full amount, timing, and payment index
+one transfer moves the full signed amount to the recipient; the submitter receives no protocol funds
 ```
 
 ## Status
@@ -35,8 +36,9 @@ Implemented:
 - payer- or biller-authorized cancellation through direct and authorizer-bound signed paths
 - exact recurring payments with a contract-generated start and immediate first unlock
 - finite or open-ended schedules with sequential catch-up for missed payments
-- mandate-level named or open external settlement, with independent direct biller authority
-- an optional exact `settlerFeePerPayment` transfer routed from within payer gross to an eligible non-biller caller
+- permissionless settlement submission: any address may settle the exact next unlocked occurrence
+- exactly one nominal transfer of the full amount from the payer to the pinned recipient for every successful occurrence
+- no protocol payment or special settlement authority for the submitter, including when the submitter is the biller
 - settlement events emitted after consuming the payment index and before token calls, preserving index order across
   nested settlement callbacks
 - SafeERC20-style `transferFrom` handling for tokens that return `bool` or no return data
@@ -49,6 +51,8 @@ Not implemented:
 - calendar-month billing semantics
 - arbitrary-token economic accounting guarantees for fee-on-transfer, rebasing, excessive-debit, or malicious tokens
 - a signed future schedule start or collection deadline
+- onchain grace periods, payment pauses, preferred submitters, or retry pacing
+- protocol-funded compensation for settlement submission
 - SDK, typed-data generation helpers, indexer, dashboard, or merchant API
 
 ## Contract Surface
@@ -60,10 +64,8 @@ struct Mandate {
     address payer;
     address biller;
     address recipient;
-    address settler;
     address token;
-    uint256 payerGrossPerPayment;
-    uint256 settlerFeePerPayment;
+    uint256 amountPerPayment;
     uint256 periodLength;
     uint256 totalPayments; // zero means open-ended
     bytes32 termsHash;
@@ -77,10 +79,20 @@ currently accepts larger positive counts even though they cannot complete. Integ
 ceiling is not meaningful payer protection for an open-ended mandate.
 
 The `mandateId` is the EIP-712 digest of `Mandate` under the `FixedMandate` domain, so it is chain- and
-deployment-specific. Payer authorization signs
-`MandateAuthorization(Mandate mandate,uint256 signatureDeadline)`, while biller acceptance signs
-`MandateAcceptance(Mandate mandate,uint256 signatureDeadline)`. Both wrappers commit to the complete fixed
-terms.
+deployment-specific. The domain name and version are `FixedMandate` and `1`; version `1` remains appropriate because
+this is still the first undeployed schema. The canonical type strings are:
+
+```text
+Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+
+MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+
+MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+```
+
+Payer authorization signs `MandateAuthorization`, while biller acceptance signs `MandateAcceptance`. Both wrappers
+commit to the complete nine-field mandate. This is a breaking pre-deployment schema; the contract does not accept
+signatures or mandate IDs from the earlier field layout.
 
 `openMandate` treats its submitter as neutral and requires both typed signatures. `openMandateAsPayer` and
 `openMandateAsBiller` require the corresponding party to call and replace only that party's signature with transaction
@@ -91,16 +103,35 @@ The generated start is not part of the signed terms. Payment index `0` unlocks i
 `startedAt + i * periodLength`. Signature deadlines limit how long a neutral holder of both opening signatures may wait
 before seeking inclusion; the confirmed block timestamp supplied by the block producer becomes the schedule anchor.
 
-`settle(mandate, nextPaymentIndex)` pulls exactly one unlocked occurrence. The supplied index must equal the stored
-settled count, so stale or racing transactions cannot consume a later occurrence. Missed payments remain available and
-may settle in rapid succession. A positive `totalPayments` caps the schedule; zero continues unlocking until
-cancellation. Finite arrears remain collectible after the final scheduled unlock.
+`settle(mandate, nextPaymentIndex)` is permissionless and pulls exactly one unlocked occurrence. Any address may submit
+it; the biller has the same settlement access and economics as every other address. The supplied index must equal the
+stored settled count, so racing transactions cannot both consume an occurrence and a stale transaction cannot silently
+consume a later one.
 
-The biller may always call `settle`. Otherwise, a nonzero `settler` restricts settlement to that address, while a zero
-`settler` permits any caller. For an eligible non-biller, `FixedMandate` requests `gross - fee` to the recipient and the
-exact signed `settlerFeePerPayment` to the caller. A biller call waives the fee and requests one full-gross transfer to
-the recipient. These are nominal `transferFrom` amounts: if the payer is also a transfer destination, that self-transfer
-leg can consume allowance without producing the same net balance movement.
+Every successful call makes exactly one nominal transfer:
+
+```solidity
+IERC20(mandate.token).safeTransferFrom(
+    mandate.payer,
+    mandate.recipient,
+    mandate.amountPerPayment
+);
+```
+
+The submitter cannot redirect this transfer and receives no funds from `FixedMandate`. Under standard ERC-20 semantics,
+and when payer and recipient are distinct, the payer debit and recipient credit both equal
+`amountPerPayment`. If payer and recipient are the same address, the self-transfer can consume allowance without the
+same net balance movement.
+
+**Collection is immediate and permissionless after unlock.** Any address may cause the next unlocked occurrence to be
+collected, and missed occurrences may be collected sequentially in rapid succession, including after the final unlock
+of a finite schedule. A positive `totalPayments` caps the schedule; zero continues unlocking until cancellation.
+Offchain grace, pause, preferred-operator, retry-pacing, or service-level policies do not restrict the contract. Only
+onchain ordering, cancellation, the next-index and unlock checks, finite completion, or a failed token transfer can stop
+a submitted collection.
+
+Monitoring, transaction submission, replacement, retries, dunning, reconciliation, gas management, and any associated
+commercial arrangements are execution-layer concerns outside this protocol.
 
 The payer and biller can each cancel directly or authorize cancellation by EIP-712 signature. Signed cancellations bind
 the payer or biller address as `authorizer` and use a separate per-authorizer replay mapping. Cancellation blocks both
@@ -111,10 +142,37 @@ used cancellation nonces, and the current `unlockedPaymentCount`.
 
 ## Events And Indexing
 
-- `MandateOpened` indexes `mandateId`, `payer`, and `biller`, and emits every signed mandate field plus the generated
-  `startedAt`.
-- `PaymentSettled` indexes `mandateId`, `paymentIndex`, and `payer`, and records payer gross, actual fee, and the
-  settlement caller.
+The lifecycle event schemas are:
+
+```solidity
+event MandateOpened(
+    bytes32 indexed mandateId,
+    address indexed payer,
+    address indexed biller,
+    address token,
+    address recipient,
+    uint256 amountPerPayment,
+    uint256 periodLength,
+    uint256 totalPayments,
+    uint256 startedAt,
+    uint256 nonce,
+    bytes32 termsHash
+);
+
+event PaymentSettled(
+    bytes32 indexed mandateId,
+    uint256 indexed paymentIndex,
+    address indexed payer,
+    address biller,
+    address recipient,
+    address token,
+    uint256 amountPerPayment,
+    address submitter
+);
+```
+
+- `MandateOpened` contains every signed mandate field plus the generated `startedAt`.
+- `PaymentSettled` records the immediate `submitter` as factual provenance only, not as an authorized protocol role.
 - `MandateCancellation` indexes `mandateId`, `payer`, and the payer or biller that authorized cancellation.
 - `UnorderedNonceInvalidation` records the mask submitted for the payer's nonce bitmap; the mask may be zero or include
   bits that were already set.
@@ -177,26 +235,30 @@ forge script script/DeployFixedMandate.s.sol:DeployFixedMandate \
 ## Security Notes
 
 `FixedMandate` deliberately has **no token allowlist**. Any token address can be signed into a mandate as permissionless
-input. Settlement reverts if the token address has no code, but fee and gross guarantees assume standard ERC-20
-semantics: `transferFrom(from, to, amount)` debits exactly `amount` and credits exactly `amount`. Fee-on-transfer,
-rebasing, excessive-debit, pausable, blocklist, callback-heavy, and malicious tokens are outside the current economic
-guarantee boundary. The contract permits role addresses to overlap, so net proceeds and net payer outflow also depend
-on whether a transfer is a self-transfer.
+input. Settlement reverts if the token address has no code, but nominal amount accounting assumes standard
+ERC-20 semantics: `transferFrom(from, to, amount)` debits exactly `amount` and credits exactly `amount`.
+Fee-on-transfer, rebasing, excessive-debit, pausable, blocklist, callback-heavy, and malicious tokens are outside the
+current economic guarantee boundary. This token-level fee-on-transfer warning is unrelated to protocol-funded
+submission compensation. Payer, biller, and recipient addresses may overlap, so net proceeds and payer outflow also
+depend on whether the one transfer is a self-transfer.
 
 `FixedMandate` has no reentrancy mutex. It consumes the current payment index before token interactions, preventing a
-same-index replay. On an open-settler mandate, a callback token can nevertheless settle another already-unlocked index
-and, when configured, receive that nested occurrence's fee. A token that is neither the biller nor the named settler
-cannot settle or receive a fee under a named-settler mandate. Every nested settlement still has to satisfy the caller,
-next-index, unlock, and finite-count rules, and all nested effects revert if the outer call fails.
+same-index replay. Because settlement is permissionless, a callback-capable token can submit the next already-unlocked
+index just like any other address. The callback receives no protocol funds and cannot redirect payment away from the
+pinned recipient. Every nested settlement must independently pass the opened, cancellation, next-index, unlock, and
+finite-count checks. Events remain ordered by payment index, and all nested state, logs, and transfers revert if the
+outer transfer fails.
 
 `FixedMandate` is a shared ERC-20 spender. Users should approve finite amounts sized to expected exposure. For a finite
 mandate, allowance should cover unpaid occurrences, including any unlocked backlog. For an open-ended mandate, choose
 a deliberate runway budget and replenish it as needed rather than treating exposure as finite.
 
 Cancellation stops one mandate. Reducing or revoking ERC-20 allowance prevents pulls while allowance is insufficient,
-but does not cancel the mandate. A delayed caller can collect several accrued payments consecutively, and an open-ended
-schedule has no payer-selected lifetime count before cancellation. Products should display currently unlocked arrears
-and immediate gross exposure, not only the per-payment amount.
+but does not cancel the mandate. Any address can collect several accrued payments consecutively, and an open-ended
+schedule has no payer-selected lifetime count before cancellation. Cancellation and allowance changes take effect only
+according to onchain ordering; an already ordered settlement may land first. Applications should display currently
+unlocked arrears and immediate nominal exposure, not only the per-payment amount, and must not present offchain grace or
+pacing as an onchain guarantee.
 
 ## Future Work
 

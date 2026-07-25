@@ -39,12 +39,12 @@ spender may transfer up to X tokens
 A fixed mandate narrows that allowance into a bilateral recurring-payment right:
 
 ```text
-pull this exact gross amount from this payer
+pull this exact payment amount from this payer
 use only this token
 pay only this recipient
 unlock one occurrence at this fixed cadence
-allow this biller and the signed external-settler policy to initiate settlement
-pay at most the exact signed fee from within payer gross
+allow any address to submit the exact next unlocked occurrence
+transfer the full signed amount directly to the pinned recipient
 stop after the signed finite count, or continue until cancellation when the count is zero
 require the next sequential payment index
 stop this mandate when the payer or biller cancels it
@@ -52,23 +52,25 @@ stop this mandate when the payer or biller cancels it
 
 Opening generates the schedule start and unlocks the first occurrence immediately. Each elapsed period unlocks another
 occurrence. An unlocked occurrence does not expire: missed payments remain available for sequential catch-up until the
-mandate is cancelled. Cancellation does not revoke the underlying token allowance.
+mandate is cancelled. Any address may cause every unlocked occurrence, including arrears, to be collected immediately.
+Offchain grace periods, pause requests, retry pacing, and preferred-operator policies are not enforced by the contract.
+Cancellation does not revoke the underlying token allowance.
 
 ## Actors
 
 | Actor | Role |
 |---|---|
 | Payer | Token holder whose ERC-20 allowance is spent. Authorizes mandate terms or calls directly, and may cancel. |
-| Biller | Commercial counterparty that accepts mandate terms, always retains direct settlement authority, and may cancel. |
-| Recipient | Address pinned by the mandate as the destination of payer gross minus any nominal external-settler fee. |
-| Settler | External settlement caller and nominal fee destination. A named settler restricts external settlement; zero permits any caller. |
-| Submitter | Any address that submits a relayed `openMandate`. It receives no party authority by doing so. |
+| Biller | Commercial counterparty that accepts mandate terms and may cancel. It has no special settlement authority or economics. |
+| Recipient | Address pinned by the mandate as the destination of the full nominal amount. |
+| Submitter | Any address that submits an opening, signed cancellation, or settlement transaction. Submission grants no party authority and the contract pays the submitter nothing. |
 | `FixedMandate` | Immutable onchain verifier, schedule state machine, and ERC-20 transfer coordinator. |
 | Token | ERC-20 address signed into the mandate. Economic guarantees assume standard transfer semantics. |
 | Wallet/indexer | Offchain software that prepares typed data, displays exposure, tracks events, and helps users cancel or revoke allowance. |
 
-The biller is not treated as an external settler. A biller may settle regardless of the signed `settler`, but its call
-always waives `settlerFeePerPayment` and requests a full-gross transfer to the recipient.
+Settlement submission is deliberately unprivileged. The payer, biller, recipient, a third-party service, a token
+callback, or any other address may call `settle` under the same checks and economics. The immediate `msg.sender` is
+recorded only as factual event provenance; it is not a signed protocol role.
 
 ## Contract Surface
 
@@ -79,8 +81,8 @@ always waives `settlerFeePerPayment` and requests a full-gross transfer to the r
 | `openMandate` | Anyone | Open using payer authorization and biller acceptance. |
 | `openMandateAsPayer` | Payer | Open using payer transaction authority and biller acceptance. |
 | `openMandateAsBiller` | Biller | Open using biller transaction authority and payer authorization. |
-| `settle` | Biller, named settler, or anyone when settlement is open | Settle exactly the next unlocked payment index. |
-| `cancelMandate` | Payer | Cancel one opened mandate using direct transaction authority. |
+| `settle` | Anyone | Submit exactly the next unlocked payment index; the full amount goes to the pinned recipient. |
+| `cancelMandateAsPayer` | Payer | Cancel one opened mandate using direct transaction authority. |
 | `cancelMandateAsBiller` | Biller | Cancel one opened mandate using direct transaction authority. |
 | `cancelMandateWithPayerSignature` | Anyone | Cancel using payer typed authorization. |
 | `cancelMandateWithBillerSignature` | Anyone | Cancel using biller typed authorization. |
@@ -115,10 +117,8 @@ struct Mandate {
     address payer;
     address biller;
     address recipient;
-    address settler;
     address token;
-    uint256 payerGrossPerPayment;
-    uint256 settlerFeePerPayment;
+    uint256 amountPerPayment;
     uint256 periodLength;
     uint256 totalPayments;
     bytes32 termsHash;
@@ -129,12 +129,7 @@ struct Mandate {
 Validation rules are:
 
 - `payer`, `biller`, `recipient`, and `token` must be nonzero;
-- `settler == address(0)` permits any non-biller caller to settle;
-- a nonzero `settler` restricts external settlement to that exact address;
-- the biller may always settle, independently of `settler`;
-- `payerGrossPerPayment` and `periodLength` must be nonzero;
-- `settlerFeePerPayment` may be zero but must be less than `payerGrossPerPayment`;
-- if `settler == biller`, `settlerFeePerPayment` must be zero because biller settlement waives the fee;
+- `amountPerPayment` and `periodLength` must be nonzero;
 - `totalPayments == 0` selects an open-ended schedule, while a positive value is the intended finite count, subject to
   the implementation limit below;
 - `termsHash` must be nonzero and commits to offchain terms or metadata; and
@@ -251,8 +246,26 @@ Typed objects are:
 | `MandateAcceptance(Mandate mandate,uint256 signatureDeadline)` | Biller | Accepts the exact terms for relayed or payer-direct opening until the biller deadline. |
 | `Cancellation(bytes32 mandateId,address authorizer,uint256 nonce,uint256 signatureDeadline)` | Payer or biller | Authorizes cancellation by any submitter until the cancellation deadline. |
 
-The nested opening wrappers commit to every `Mandate` field. Any change to payer, biller, recipient, settler,
-token, amount, fee, cadence, finite count, `termsHash`, or nonce changes the digest.
+The canonical base and nested opening type strings are:
+
+```text
+Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+
+MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+
+MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+```
+
+Their type hashes are:
+
+```text
+Mandate:              0x2cb7e3a6ce71ea54f5b22fa6a91ad500901576ca2e0bb109f23a0000ed803418
+MandateAuthorization: 0xf9d6fb0adbc3b16b07a472bbfadd3bebbd4c55774935ad15d79ec25e3b656fc2
+MandateAcceptance:    0xe2b64c471e9c56916489f2a1e58382e9d165717620a0a17467ade21ee66f3752
+```
+
+The nested opening wrappers commit to every `Mandate` field. Any change to payer, biller, recipient, token, amount,
+cadence, finite count, `termsHash`, or nonce changes the digest.
 
 Contract accounts are validated exclusively through ERC-1271. This includes code-bearing delegated accounts, so a bare
 ECDSA recovery cannot bypass their account policy. Addresses without code use ECDSA validation and additionally support
@@ -292,51 +305,51 @@ implementation limit documented above.
 
 ```mermaid
 sequenceDiagram
-    participant C as Settlement caller
+    participant S as Unprivileged submitter
     participant E as FixedMandate
     participant I as Indexer
     participant T as ERC20
     participant P as Payer
     participant R as Recipient
 
-    C->>E: settle(mandate, nextPaymentIndex)
+    S->>E: settle(mandate, nextPaymentIndex)
     E->>E: Derive mandateId and load state
     E->>E: Require opened and not cancelled
-    E->>E: Check biller/open/named caller policy
     E->>E: Require nextPaymentIndex == settledPaymentCount
     E->>E: Derive unlocked count from startedAt and periodLength
     E->>E: Require index is unlocked and below finite total
     E->>E: Increment settledPaymentCount
-    E->>E: Set actual fee to zero for biller, otherwise signed fee
-    E-->>I: Emit PaymentSettled
-    alt Caller is biller or configured fee is zero
-        E->>T: transferFrom full gross to recipient
-    else Eligible non-biller caller
-        E->>T: transferFrom gross minus fee to recipient
-        E->>T: transferFrom exact fee to caller
-    end
+    E-->>I: Emit PaymentSettled with submitter provenance
+    E->>T: transferFrom(payer, recipient, amountPerPayment)
+    T->>P: Debit amountPerPayment
+    T->>R: Credit amountPerPayment
 ```
 
-The biller may always settle. For any other caller, `settler == address(0)` opens settlement to everyone, while a
-nonzero `settler` permits only that address. The named-settler policy does not remove biller authority.
+Settlement is permissionless: there is no caller allowlist, operator field, or special biller path. The submitter
+cannot change the signed token, payer, recipient, amount, schedule, or payment index, and receives no protocol funds.
+The biller can submit only because every address can submit, with identical checks and economics.
 
 The submitted index is optimistic concurrency control. It must equal `settledPaymentCount`, so two transactions racing
-for the same index cannot both succeed. The first consumes the index; the stale transaction reverts. A biller and
-external settler can race, and a successful biller transaction records fee zero and can preempt the external reward.
+for the same index cannot both succeed. The first consumes the index; the stale transaction reverts. Front-running can
+change which address is recorded as `submitter`, but cannot redirect funds or alter settlement economics.
 
-`FixedMandate` follows checks, state effects, event emission, then token interactions. If a required token transfer
+`FixedMandate` follows checks, state effects, event emission, then one token interaction. If the token transfer
 reverts, the EVM rolls back the counter, event, transfers, and every nested effect.
 
 There is no reentrancy mutex. Because the count increments before token calls, a callback cannot replay the same index.
-On an open-settler mandate, however, a callback token may recursively settle one or more later already-unlocked indexes
-and, when configured, receive each nested external-settler fee. Every nested invocation must independently pass caller,
-next-index, unlock, and finite-total checks, and its token transfers must succeed. Under a named-settler mandate, a token
-that is neither the biller nor the named settler cannot settle or receive a fee. A token explicitly signed as either
-role has the corresponding signed authority.
+A callback token is an address like any other and may recursively submit one or more later already-unlocked indexes.
+Every nested invocation must independently pass mandate, next-index, unlock, finite-total, cancellation, and token
+transfer checks. It cannot redirect payment away from the signed recipient and receives nothing from the contract.
+If an outer transfer ultimately fails, all nested state, logs, and transfers roll back with it.
 
 `PaymentSettled` is emitted after its index is consumed but before token interactions. An outer index event is
 therefore logged before any later index reached through its token callback. Logs for one mandate remain ordered by
 `paymentIndex`, and rollback removes all affected logs if a later transfer fails.
+
+Because settlement is permissionless, any actor may collect index `0` as soon as opening succeeds and may collect all
+unpaid unlocked arrears sequentially without waiting for an offchain instruction. Grace periods, preferred transaction
+submitters, retry intervals, dunning states, and pause requests are coordination conventions only. Onchain collection
+is blocked only by the protocol checks, cancellation, insufficient balance or allowance, or token failure.
 
 ## Cancellation
 
@@ -375,43 +388,39 @@ sequenceDiagram
 ```
 
 If signed cancellation later fails because the mandate is unopened or already cancelled, the nonce update rolls back
-with the transaction. The settler cannot cancel. Cancellation blocks both unlocked arrears and future occurrences, but
-it does not revoke ERC-20 allowance. Allowance revocation at the token is the broad emergency brake for all pulls from
-that payer for that token through this `FixedMandate` deployment.
+with the transaction. Only the payer or biller can authorize cancellation; permissionless settlement submission grants
+no cancellation authority. Cancellation blocks both unlocked arrears and future occurrences, but it does not revoke
+ERC-20 allowance. Allowance revocation at the token is the broad emergency brake for all pulls from that payer for that
+token through this `FixedMandate` deployment.
 
-## Exact Fee Policy
+## Settlement Accounting
 
-`payerGrossPerPayment` is the sum of the nominal `transferFrom` amounts requested for every occurrence. The fee branch
-is determined solely by the caller:
+Every successful occurrence requests exactly one nominal token transfer:
 
 ```text
-fee transfer amount = 0                             when caller == biller
-fee transfer amount = settlerFeePerPayment          for an eligible non-biller caller
-total transferFrom amount = payerGrossPerPayment
-recipient transfer amount = payerGrossPerPayment - fee transfer amount
-caller transfer amount = fee transfer amount
+transferFrom(payer, recipient, amountPerPayment)
+submitter protocol payment = 0
 ```
 
-The fee is denominated in raw token units and routed from within payer gross. It is not added on top. Validation requires
-`settlerFeePerPayment < payerGrossPerPayment`, so recipient nominal proceeds remain positive. A zero fee causes one full
-gross transfer to the recipient and skips the caller transfer.
+For a standard ERC-20 with distinct payer and recipient addresses:
 
-The contract permits payer, recipient, biller, and settler addresses to overlap. The formulas above specify call
-amounts, not guaranteed net balance deltas: for a standard ERC-20, a transfer whose destination is also the payer is a
-self-transfer that can consume allowance while leaving that address's net balance unchanged. Product profiles that
-promise net recipient proceeds or a net caller reward should require the relevant addresses to be distinct.
+```text
+payer debit = amountPerPayment
+recipient credit = amountPerPayment
+submitter credit = 0
+```
 
-Caller and fee configurations behave as follows:
+The contract has no execution fee, reward, tip, fee recipient, or biller-specific economics. The submitter pays its own
+transaction costs unless some external system sponsors them; any reimbursement or commercial charge exists outside the
+protocol.
 
-| External-settler policy | Signed fee | Behavior |
-|---|---|---|
-| Named (`settler != address(0)`) | Nonzero | Exact fee is routed to the named settler; biller may settle but waives it. |
-| Named | Zero | Named settler or biller may settle without an onchain reward. |
-| Open (`settler == address(0)`) | Nonzero | Any non-biller may compete for the exact fee transfer; biller may settle but waives it. |
-| Open | Zero | Any caller, including the biller, may settle without an onchain reward. |
+The contract permits payer, recipient, and biller addresses to overlap. The formula specifies the token call, not every
+possible net balance delta: if payer and recipient are the same address, a standard ERC-20 self-transfer can consume
+allowance while leaving that address's net balance unchanged.
 
-If `settler == biller`, the signed fee must be zero. The biller can never receive `settlerFeePerPayment` through
-`settle`, even when a different named settler was signed.
+Fee-on-transfer and other non-standard tokens may produce different balance deltas even though `FixedMandate` requests
+the full signed amount exactly once. That token-level behavior is an explicit compatibility boundary, not a protocol
+execution fee.
 
 ## Unlock Schedule
 
@@ -439,8 +448,8 @@ nextPaymentIndex < unlockedPaymentCount
 
 Each call settles one occurrence. If three occurrences are unlocked and unpaid, three sequential calls may settle them
 in the same block. There is no settlement window, minimum delay, absolute end, or expiration. A finite schedule stops
-accruing after its count, while its unpaid unlocked occurrences remain collectible until cancellation. Periods are
-fixed-duration seconds, not calendar months.
+accruing after its count, while its unpaid unlocked occurrences remain collectible by anyone until cancellation.
+Offchain pacing cannot delay an unlocked occurrence. Periods are fixed-duration seconds, not calendar months.
 
 ## Nonces
 
@@ -471,10 +480,39 @@ separate, so the same numeric value can independently be used as an opening nonc
 
 Protocol events are the indexer boundary:
 
+```solidity
+event MandateOpened(
+    bytes32 indexed mandateId,
+    address indexed payer,
+    address indexed biller,
+    address token,
+    address recipient,
+    uint256 amountPerPayment,
+    uint256 periodLength,
+    uint256 totalPayments,
+    uint256 startedAt,
+    uint256 nonce,
+    bytes32 termsHash
+);
+
+event PaymentSettled(
+    bytes32 indexed mandateId,
+    uint256 indexed paymentIndex,
+    address indexed payer,
+    address biller,
+    address recipient,
+    address token,
+    uint256 amountPerPayment,
+    address submitter
+);
+
+event MandateCancellation(bytes32 indexed mandateId, address indexed payer, address indexed cancelledBy);
+```
+
 | Event | Indexed fields | Meaning |
 |---|---|---|
 | `MandateOpened` | `mandateId`, `payer`, `biller` | A mandate opened. Non-indexed data contains every remaining signed field plus generated `startedAt`. |
-| `PaymentSettled` | `mandateId`, `paymentIndex`, `payer` | One occurrence settled. Data records biller, recipient, token, payer gross, actual fee, and caller. |
+| `PaymentSettled` | `mandateId`, `paymentIndex`, `payer` | One occurrence settled. Data records biller, recipient, token, amount per payment, and immediate submitter. |
 | `MandateCancellation` | `mandateId`, `payer`, `cancelledBy` | Payer or biller authorized cancellation. |
 | `UnorderedNonceInvalidation` | `owner`, `wordPos` | Records the mask ORed into an owner's bitmap; `mask` is non-indexed and may be a no-op. |
 
@@ -489,6 +527,7 @@ execution.
 For settlement, the event is emitted after the counter increments and before token interactions. This makes logs from
 nested settlements appear in ascending `paymentIndex` order. Indexers may process that order directly, but should still
 treat logs as final only after normal chain-confirmation policy. Any transfer revert removes the event and state update.
+The `submitter` field is provenance only; indexers must not interpret it as an authorized role or payment recipient.
 
 ## Trust And Security Model
 
@@ -502,29 +541,35 @@ Under standard ERC-20 transfer semantics, the contract guarantees its own checks
 - payer opening nonces cannot replay;
 - signed cancellation is bound to its authorizer and cancellation nonce;
 - unopened and cancelled mandates cannot settle;
-- named/open external-settler policy and independent biller authority are enforced;
+- any address may submit settlement, with no special biller path;
 - settlement consumes only the next sequential index;
 - an index cannot settle before it unlocks or beyond a finite total;
-- recipient, token, exact nominal payer gross, and maximum actual fee are pinned by signed terms;
-- biller settlement always waives the fee;
+- recipient, token, and exact nominal amount are pinned by signed terms;
+- each successful occurrence requests one transfer of the full amount to the recipient and no transfer to the submitter;
 - consuming state before token interactions prevents same-index callback replay; and
-- state changes and events roll back if any required token transfer fails.
+- state changes and events roll back if the token transfer fails.
+
+Permissionless collection is an intentional part of the authorization model. Once an occurrence unlocks, an adversarial
+or merely unexpected address may submit it immediately, including each sequential occurrence in an arrears backlog.
+The submitter cannot redirect funds or receive a protocol payment, but can choose transaction timing within the onchain
+constraints. Payers and billers must sign and open mandates with that timing model in mind.
 
 The contract does not measure token balance deltas. Its economic accounting assumes
 `transferFrom(from, to, amount)` debits exactly `amount` and credits exactly `amount`. It does not guarantee:
 
 - behavior of fee-on-transfer, rebasing, excessive-debit, pausable, blocklist, callback-heavy, malicious, or otherwise
   non-standard tokens;
-- net balance outcomes implied by nominal transfer amounts when the payer is also the recipient or settlement caller;
-- that an open-settler token callback cannot consume later already-unlocked occurrences and receive their fees;
+- net balance outcomes implied by nominal transfer amounts when the payer is also the recipient;
+- prevention of a token callback or any other address from consuming later already-unlocked occurrences;
 - payer balance, allowance availability, merchant solvency, or successful settlement availability;
 - correctness, availability, or legal enforceability of offchain content committed by `termsHash`;
 - privacy of payer, biller, token, recipient, amounts, cadence, or settlement history;
 - that cancellation wins a race against a pending settlement transaction;
 - allowance revocation after mandate cancellation;
+- enforcement of an offchain grace period, pause, preferred submitter, retry interval, or collection pacing policy;
 - calendar-month billing semantics;
 - recovery from compromised payer or biller signing authority;
-- a payer-selected finite lifetime count or nominal gross bound when `totalPayments == 0`; or
+- a payer-selected finite lifetime count or nominal-total bound when `totalPayments == 0`; or
 - protection from rapid sequential collection of already-unlocked arrears.
 
 There is no admin pause, token registry, signer registry, proxy upgrade, or owner rescue path in core.
@@ -538,13 +583,31 @@ as needed.
 Cancellation stops one mandate; allowance revocation stops every pull from that payer for that token through this
 `FixedMandate` deployment. Wallets and dashboards should display at least:
 
-- exact gross per payment;
-- currently unlocked but unpaid occurrence count and gross exposure;
+- exact amount per payment;
+- currently unlocked but unpaid occurrence count and nominal exposure;
 - next unlock time;
 - remaining finite occurrences or the fact that the schedule is open-ended;
-- configured external-settler policy and fee;
+- the fact that any address may immediately collect each unlocked sequential occurrence;
 - cancellation state; and
 - current token allowance to `FixedMandate`.
+
+### Integration Guidance
+
+Integrations must encode the exact nine-field `Mandate` schema and use the deployed contract address and current chain
+in the EIP-712 domain. Before presenting a signature, they should make the amount per payment, cadence, finite or
+open-ended count, immediate first unlock, permissionless collection, and arrears exposure explicit.
+
+A transaction service should read `settledPaymentCount` and the unlocked count immediately before submitting. A stale
+index reverts rather than consuming a later occurrence, so competing services should treat `UnexpectedPaymentIndex` as
+normal optimistic-concurrency failure and refresh state before retrying.
+
+Monitoring, transaction submission, gas sponsorship, retries, dunning, reconciliation, service levels, and any
+offchain charging arrangement are outside the protocol. Such systems may prefer or coordinate a submitter, but cannot
+make that preference binding onchain. They must not infer authority or compensation from `PaymentSettled.submitter`.
+
+To stop one mandate, submit a valid payer- or biller-authorized cancellation. To stop all pulls for a payer/token pair
+through this deployment, reduce or revoke the token allowance. A private pause flag, delayed retry schedule, or
+offchain instruction alone does not prevent another address from settling an unlocked occurrence.
 
 ## Known Non-Goals
 
@@ -553,6 +616,8 @@ The current contract does not implement:
 - ERC-2612, Permit2, DAI permit, or other activation adapters;
 - arbitrary permit calldata execution;
 - batch settlement;
+- submitter allowlists, operator delegation, or submission rewards;
+- onchain grace periods, collection pacing, or pause state;
 - calendar-month billing;
 - token allowlists or token registries;
 - merchant key hierarchy or signed biller-address rotation;
@@ -598,8 +663,8 @@ Before changing protocol behavior, update together as relevant:
 - [src/interfaces/IFixedMandate.sol](./src/interfaces/IFixedMandate.sol)
 - [src/Signatures.sol](./src/Signatures.sol)
 - [src/UnorderedNonces.sol](./src/UnorderedNonces.sol)
-- [test/FixedMandate.t.sol](./test/FixedMandate.t.sol)
-- [test/FixedMandate.invariant.t.sol](./test/FixedMandate.invariant.t.sol)
+- [test/FixedMandateExecutor.t.sol](./test/FixedMandateExecutor.t.sol)
+- [test/FixedMandateExecutor.invariant.t.sol](./test/FixedMandateExecutor.invariant.t.sol)
 - [README.md](./README.md)
 - [WHITEPAPER-WIP.md](./WHITEPAPER-WIP.md)
 - this file
@@ -613,9 +678,12 @@ For future agents:
 - preserve the three explicit opening routes and their shared payer nonce semantics unless creation is deliberately
   redesigned;
 - preserve the generated start, immediate first unlock, sequential next-index rule, finite/open-ended count semantics,
-  and biller fee waiver;
+  permissionless submission, and one transfer of the full amount to the pinned recipient;
 - preserve `PaymentSettled` emission after index consumption and before token interactions so callback logs remain
   index-ordered;
+- treat `PaymentSettled.submitter` as factual provenance only, never as protocol authority or a payment recipient;
+- disclose that offchain grace, pause, preferred-submitter, and pacing policies cannot stop permissionless collection
+  of unlocked occurrences;
 - treat payer or biller `msg.sender` as authority only in its corresponding direct entrypoint;
 - keep direct payer and biller cancellation separate from direct mandate creation;
 - do not add arbitrary external calls or generic permit calldata execution to core;
