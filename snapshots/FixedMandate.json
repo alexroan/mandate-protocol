@@ -1,6 +1,6 @@
 {
   "cancelMandate.biller.signature.compact": "64231",
-  "cancelMandate.biller.signature.eoa": "64512",
+  "cancelMandate.biller.signature.eoa": "64524",
   "cancelMandate.biller.signature.erc1271": "67464",
   "cancelMandate.payer.direct": "32497",
   "cancelMandate.payer.signature.eoa": "64311",

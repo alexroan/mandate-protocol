@@ -52,25 +52,6 @@ contract MockERC20 {
     }
 }
 
-contract ConfigurableDecimalsMockERC20 is MockERC20 {
-    uint8 internal immutable configuredDecimals;
-
-    constructor(uint8 decimals_) {
-        configuredDecimals = decimals_;
-    }
-
-    function decimals() public view override returns (uint8) {
-        return configuredDecimals;
-    }
-}
-
-contract ZeroTransferRevertingMockERC20 is MockERC20 {
-    function _transfer(address from, address to, uint256 amount) internal override {
-        require(amount != 0, "ZERO_TRANSFER");
-        super._transfer(from, to, amount);
-    }
-}
-
 contract FeeOnTransferMockERC20 is MockERC20 {
     function _transfer(address from, address to, uint256 amount) internal override {
         require(to != address(0), "ZERO_TO");
@@ -189,7 +170,6 @@ contract ReentrantMockERC20 is MockERC20 {
     bytes public callbackData;
     uint256 public callbackTransferNumber;
     uint256 public transferFromCount;
-    bool public bubbleCallbackFailure;
     bool public returnFalseAfterCallback;
     bool public callbackAttempted;
     bool public callbackSucceeded;
@@ -199,13 +179,11 @@ contract ReentrantMockERC20 is MockERC20 {
         address target,
         bytes calldata data,
         uint256 transferNumber,
-        bool bubbleFailure,
         bool returnFalseAfterCallback_
     ) external {
         callbackTarget = target;
         callbackData = data;
         callbackTransferNumber = transferNumber;
-        bubbleCallbackFailure = bubbleFailure;
         returnFalseAfterCallback = returnFalseAfterCallback_;
         transferFromCount = 0;
         callbackAttempted = false;
@@ -223,11 +201,6 @@ contract ReentrantMockERC20 is MockERC20 {
             (bool success, bytes memory returnData) = callbackTarget.call(callbackData);
             callbackSucceeded = success;
             callbackReturnData = returnData;
-            if (!success && bubbleCallbackFailure) {
-                assembly ("memory-safe") {
-                    revert(add(returnData, 0x20), mload(returnData))
-                }
-            }
             if (returnFalseAfterCallback && success) return false;
         }
         return true;
