@@ -190,17 +190,23 @@ contract ReentrantMockERC20 is MockERC20 {
     uint256 public callbackTransferNumber;
     uint256 public transferFromCount;
     bool public bubbleCallbackFailure;
+    bool public returnFalseAfterCallback;
     bool public callbackAttempted;
     bool public callbackSucceeded;
     bytes public callbackReturnData;
 
-    function configureCallback(address target, bytes calldata data, uint256 transferNumber, bool bubbleFailure)
-        external
-    {
+    function configureCallback(
+        address target,
+        bytes calldata data,
+        uint256 transferNumber,
+        bool bubbleFailure,
+        bool returnFalseAfterCallback_
+    ) external {
         callbackTarget = target;
         callbackData = data;
         callbackTransferNumber = transferNumber;
         bubbleCallbackFailure = bubbleFailure;
+        returnFalseAfterCallback = returnFalseAfterCallback_;
         transferFromCount = 0;
         callbackAttempted = false;
         callbackSucceeded = false;
@@ -222,6 +228,7 @@ contract ReentrantMockERC20 is MockERC20 {
                     revert(add(returnData, 0x20), mload(returnData))
                 }
             }
+            if (returnFalseAfterCallback && success) return false;
         }
         return true;
     }

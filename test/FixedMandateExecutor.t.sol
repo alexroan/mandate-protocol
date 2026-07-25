@@ -6,6 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {FixedMandate} from "../src/FixedMandate.sol";
 import {IFixedMandate} from "../src/interfaces/IFixedMandate.sol";
 import {IUnorderedNonces} from "../src/interfaces/IUnorderedNonces.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {
     MockERC20,
     FeeOnTransferMockERC20,
@@ -28,17 +29,15 @@ contract FixedMandateTest is Test {
     address internal payer;
     address internal biller;
     address internal recipient = makeAddr("recipient");
-    address internal settler = makeAddr("settler");
     address internal other;
 
     uint256 internal constant START = 1_700_000_000;
     uint256 internal constant PERIOD = 30 days;
     uint256 internal constant GROSS = 100e6;
-    uint256 internal constant FEE = 5e6;
     bytes32 internal constant TERMS_HASH = keccak256("fixed mandate terms v1");
-    bytes32 internal constant MANDATE_OPENED_TOPIC = 0x87fb91682f2d347c19cdca45c1cd844835c504e48ff9a52485e86682058b39a5;
+    bytes32 internal constant MANDATE_OPENED_TOPIC = 0xad55e3a0d6b405d919cd1a8df033438d18034f6c46362cd15ff991b4a3a7bd36;
     bytes32 internal constant PAYMENT_SETTLED_TOPIC =
-        0xfef0b52474c49a294daa8b19737bd198e36492404b500939eec77c828f8969cc;
+        0x1a59d7c424c7fbdd31c69bc31da5998120dbc69c9c4aecb3147453276e44ba5c;
     bytes32 internal constant MANDATE_CANCELLATION_TOPIC =
         0x328bb2c80907ff47c3ec6cf730d8843d943244db438a643c4d9f64c93e1cccb2;
 
@@ -82,7 +81,7 @@ contract FixedMandateTest is Test {
                     abi.encode(
                         keccak256(
                             bytes(
-                                "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address settler,address token,uint256 payerGrossPerPayment,uint256 settlerFeePerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+                                "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
                             )
                         ),
                         structHash,
@@ -100,7 +99,7 @@ contract FixedMandateTest is Test {
                     abi.encode(
                         keccak256(
                             bytes(
-                                "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address settler,address token,uint256 payerGrossPerPayment,uint256 settlerFeePerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+                                "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
                             )
                         ),
                         structHash,
@@ -138,40 +137,41 @@ contract FixedMandateTest is Test {
         assertEq(verifyingContract, address(executor), "verifying contract");
     }
 
-    function test_MandateStructRenamePreservesFunctionSelectors() public pure {
-        assertEq(IFixedMandate.openMandate.selector, bytes4(0x21ad8d83), "openMandate");
-        assertEq(IFixedMandate.openMandateAsPayer.selector, bytes4(0x7c8c5305), "openMandateAsPayer");
-        assertEq(IFixedMandate.openMandateAsBiller.selector, bytes4(0x8232b080), "openMandateAsBiller");
-        assertEq(IFixedMandate.settle.selector, bytes4(0x0816dddd), "settle");
-        assertEq(IFixedMandate.cancelMandateAsPayer.selector, bytes4(0x0f38003e), "cancelMandateAsPayer");
-        assertEq(IFixedMandate.cancelMandateAsBiller.selector, bytes4(0x1bb905e1), "cancelMandateAsBiller");
+    function test_BreakingMandateSchemaUsesCanonicalFunctionSelectors() public pure {
+        assertEq(IFixedMandate.openMandate.selector, bytes4(0xb16358f8), "openMandate");
+        assertEq(IFixedMandate.openMandateAsPayer.selector, bytes4(0x9d4c6e63), "openMandateAsPayer");
+        assertEq(IFixedMandate.openMandateAsBiller.selector, bytes4(0xe6b6a2d9), "openMandateAsBiller");
+        assertEq(IFixedMandate.settle.selector, bytes4(0x6ebdc6c5), "settle");
+        assertEq(IFixedMandate.cancelMandateAsPayer.selector, bytes4(0x98b2c5e1), "cancelMandateAsPayer");
+        assertEq(IFixedMandate.cancelMandateAsBiller.selector, bytes4(0x1b450796), "cancelMandateAsBiller");
         assertEq(
             IFixedMandate.cancelMandateWithPayerSignature.selector,
-            bytes4(0xfd1aad1c),
+            bytes4(0x74187f97),
             "cancelMandateWithPayerSignature"
         );
         assertEq(
             IFixedMandate.cancelMandateWithBillerSignature.selector,
-            bytes4(0x842b6dda),
+            bytes4(0xf0929b08),
             "cancelMandateWithBillerSignature"
         );
-        assertEq(IFixedMandate.mandateId.selector, bytes4(0xfbf1476c), "mandateId");
-        assertEq(IFixedMandate.hashMandateAuthorization.selector, bytes4(0x8c268f01), "hashMandateAuthorization");
-        assertEq(IFixedMandate.hashMandateAcceptance.selector, bytes4(0x3caac3d0), "hashMandateAcceptance");
-        assertEq(IFixedMandate.unlockedPaymentCount.selector, bytes4(0x67e947a9), "unlockedPaymentCount");
+        assertEq(IFixedMandate.mandateId.selector, bytes4(0xa316420a), "mandateId");
+        assertEq(IFixedMandate.hashMandateAuthorization.selector, bytes4(0x0575347b), "hashMandateAuthorization");
+        assertEq(IFixedMandate.hashMandateAcceptance.selector, bytes4(0x138e4cf3), "hashMandateAcceptance");
+        assertEq(IFixedMandate.unlockedPaymentCount.selector, bytes4(0xec3fd153), "unlockedPaymentCount");
+        assertEq(IFixedMandate.hashCancellation.selector, bytes4(0x4fa747bf), "hashCancellation");
     }
 
     function test_EventTopicsMatchCanonicalSignatures() public pure {
         assertEq(
             MANDATE_OPENED_TOPIC,
             keccak256(
-                "MandateOpened(bytes32,address,address,address,address,address,uint256,uint256,uint256,uint256,uint256,uint256,bytes32)"
+                "MandateOpened(bytes32,address,address,address,address,uint256,uint256,uint256,uint256,uint256,bytes32)"
             ),
             "MandateOpened"
         );
         assertEq(
             PAYMENT_SETTLED_TOPIC,
-            keccak256("PaymentSettled(bytes32,uint256,address,address,address,address,uint256,uint256,address)"),
+            keccak256("PaymentSettled(bytes32,uint256,address,address,address,address,uint256,address)"),
             "PaymentSettled"
         );
         assertEq(
@@ -204,17 +204,11 @@ contract FixedMandateTest is Test {
         changed.recipient = other;
         assertNotEq(executor.mandateId(changed), baseId, "recipient");
         changed = _defaultMandate(3);
-        changed.settler = other;
-        assertNotEq(executor.mandateId(changed), baseId, "settler");
-        changed = _defaultMandate(3);
         changed.token = other;
         assertNotEq(executor.mandateId(changed), baseId, "token");
         changed = _defaultMandate(3);
         changed.payerGrossPerPayment += 1;
         assertNotEq(executor.mandateId(changed), baseId, "gross");
-        changed = _defaultMandate(3);
-        changed.settlerFeePerPayment = 1;
-        assertNotEq(executor.mandateId(changed), baseId, "fee");
         changed = _defaultMandate(3);
         changed.periodLength += 1;
         assertNotEq(executor.mandateId(changed), baseId, "period");
@@ -250,25 +244,11 @@ contract FixedMandateTest is Test {
 
     function test_OpenMandateRequiresBothPartiesAndStoresGeneratedStart() public {
         IFixedMandate.Mandate memory mandate = _defaultMandate(10);
-        mandate.settler = settler;
-        mandate.settlerFeePerPayment = FEE;
         bytes32 id = executor.mandateId(mandate);
 
         vm.expectEmit(true, true, true, true, address(executor));
         emit IFixedMandate.MandateOpened(
-            id,
-            payer,
-            biller,
-            address(token),
-            recipient,
-            settler,
-            GROSS,
-            FEE,
-            PERIOD,
-            12,
-            START,
-            mandate.nonce,
-            TERMS_HASH
+            id, payer, biller, address(token), recipient, GROSS, PERIOD, 12, START, mandate.nonce, TERMS_HASH
         );
         _openMandate(mandate);
 
@@ -411,38 +391,26 @@ contract FixedMandateTest is Test {
     }
 
     function test_InvalidMandateFieldsRevertBeforeSignatureChecks() public {
-        IFixedMandate.Mandate memory base = _defaultMandate(17);
-
-        IFixedMandate.Mandate memory malformed = base;
+        IFixedMandate.Mandate memory malformed = _defaultMandate(17);
         malformed.payer = address(0);
         _expectInvalidMandate(malformed);
-        malformed = base;
+        malformed = _defaultMandate(17);
         malformed.biller = address(0);
         _expectInvalidMandate(malformed);
-        malformed = base;
+        malformed = _defaultMandate(17);
         malformed.recipient = address(0);
         _expectInvalidMandate(malformed);
-        malformed = base;
+        malformed = _defaultMandate(17);
         malformed.token = address(0);
         _expectInvalidMandate(malformed);
-        malformed = base;
+        malformed = _defaultMandate(17);
         malformed.payerGrossPerPayment = 0;
         _expectInvalidMandate(malformed);
-        malformed = base;
+        malformed = _defaultMandate(17);
         malformed.periodLength = 0;
         _expectInvalidMandate(malformed);
-        malformed = base;
+        malformed = _defaultMandate(17);
         malformed.termsHash = bytes32(0);
-        _expectInvalidMandate(malformed);
-        malformed = base;
-        malformed.settlerFeePerPayment = malformed.payerGrossPerPayment;
-        _expectInvalidMandate(malformed);
-        malformed = base;
-        malformed.settlerFeePerPayment = malformed.payerGrossPerPayment + 1;
-        _expectInvalidMandate(malformed);
-        malformed = base;
-        malformed.settler = biller;
-        malformed.settlerFeePerPayment = 1;
         _expectInvalidMandate(malformed);
     }
 
@@ -580,7 +548,6 @@ contract FixedMandateTest is Test {
         MockERC1271Wallet billerWallet = new MockERC1271Wallet(biller);
         IFixedMandate.Mandate memory mandate = _defaultMandate(27);
         mandate.biller = address(billerWallet);
-        mandate.settlerFeePerPayment = FEE;
         uint256 deadline = START + 1 hours;
         bytes memory payerSignature = _signAuthorization(payerPk, mandate, deadline);
         bytes memory openCallData =
@@ -593,11 +560,11 @@ contract FixedMandateTest is Test {
         billerWallet.execute(address(executor), openCallData);
         vm.stopSnapshotGas();
         vm.prank(biller);
-        vm.startSnapshotGas("FixedMandate", "settle.biller.wallet.feeWaived.endToEnd");
+        vm.startSnapshotGas("FixedMandate", "settle.wallet.first");
         billerWallet.execute(address(executor), settleCallData);
         vm.stopSnapshotGas();
-        assertEq(token.balanceOf(recipient), GROSS, "contract biller waives fee");
-        assertEq(token.balanceOf(address(billerWallet)), 0, "no biller fee");
+        assertEq(token.balanceOf(recipient), GROSS, "recipient receives full gross");
+        assertEq(token.balanceOf(address(billerWallet)), 0, "submitter receives no protocol funds");
 
         vm.prank(biller);
         vm.startSnapshotGas("FixedMandate", "cancelMandateAsBiller.wallet.endToEnd");
@@ -607,52 +574,48 @@ contract FixedMandateTest is Test {
         assertTrue(cancelled, "contract biller cancelled directly");
     }
 
-    // Accrual, settlement callers, and fees
+    // Accrual and permissionless settlement
 
-    function test_FirstPaymentSettlesImmediatelyAndEmitsActualValues() public {
+    function test_AnyCallerCanSettleAndRecipientReceivesFullGross() public {
         IFixedMandate.Mandate memory mandate = _defaultMandate(30);
-        mandate.settler = settler;
-        mandate.settlerFeePerPayment = FEE;
         mandate = _openMandate(mandate);
         bytes32 id = executor.mandateId(mandate);
 
-        vm.expectEmit(true, true, true, true, address(executor));
-        emit IFixedMandate.PaymentSettled(id, 0, payer, biller, recipient, address(token), GROSS, FEE, settler);
-        vm.prank(settler);
+        vm.prank(other);
         executor.settle(mandate, 0);
-        vm.snapshotGasLastCall("FixedMandate", "settle.named.fee.first");
+        vm.snapshotGasLastCall("FixedMandate", "settle.permissionless.first");
 
-        assertEq(token.balanceOf(recipient), GROSS - FEE, "recipient net");
-        assertEq(token.balanceOf(settler), FEE, "settler fee");
+        assertEq(token.balanceOf(recipient), GROSS, "recipient full gross");
+        assertEq(token.balanceOf(other), 0, "submitter receives no protocol funds");
         assertEq(token.balanceOf(payer), 100_000e6 - GROSS, "payer gross");
         (,,, uint256 settledCount) = executor.mandateStates(id);
         assertEq(settledCount, 1, "one payment settled");
     }
 
-    function test_OpenSettlementWithFeeRewardsCaller() public {
+    function test_SettlementSubmitterReceivesNoProtocolFunds() public {
         IFixedMandate.Mandate memory mandate = _defaultMandate(45);
-        mandate.settlerFeePerPayment = FEE;
         mandate = _openMandate(mandate);
+        uint256 submitterBalanceBefore = token.balanceOf(other);
 
         vm.prank(other);
         executor.settle(mandate, 0);
-        vm.snapshotGasLastCall("FixedMandate", "settle.open.fee.first");
 
-        assertEq(token.balanceOf(recipient), GROSS - FEE, "recipient net");
-        assertEq(token.balanceOf(other), FEE, "open settler fee");
+        assertEq(token.balanceOf(other), submitterBalanceBefore, "submitter balance unchanged");
+        assertEq(token.balanceOf(recipient), GROSS, "recipient receives full gross");
     }
 
-    function test_NamedSettlementWithoutFeePaysFullGross() public {
+    function test_PaymentSettledEmitsSubmitterAndNoFee() public {
         IFixedMandate.Mandate memory mandate = _defaultMandate(46);
-        mandate.settler = settler;
         mandate = _openMandate(mandate);
+        bytes32 id = executor.mandateId(mandate);
 
-        vm.prank(settler);
+        vm.expectEmit(true, true, true, true, address(executor));
+        emit IFixedMandate.PaymentSettled(id, 0, payer, biller, recipient, address(token), GROSS, other);
+        vm.prank(other);
         executor.settle(mandate, 0);
-        vm.snapshotGasLastCall("FixedMandate", "settle.named.noFee.first");
 
-        assertEq(token.balanceOf(recipient), GROSS, "recipient gross");
-        assertEq(token.balanceOf(settler), 0, "no settler fee");
+        assertEq(token.balanceOf(recipient), GROSS, "event gross equals recipient credit");
+        assertEq(token.balanceOf(other), 0, "event submitter receives no funds");
     }
 
     function test_PaymentUnlocksExactlyAtEachBoundary() public {
@@ -709,11 +672,11 @@ contract FixedMandateTest is Test {
         executor.settle(mandate, 1);
     }
 
-    function test_StaleRacingCallCannotConsumeNextUnlockedOccurrence() public {
+    function test_DifferentCallersRaceOnlyOnPaymentIndex() public {
         IFixedMandate.Mandate memory mandate = _openMandate(_defaultMandate(35));
         vm.warp(START + PERIOD);
 
-        vm.prank(settler);
+        vm.prank(biller);
         executor.settle(mandate, 0);
         vm.prank(other);
         vm.expectRevert(IFixedMandate.UnexpectedPaymentIndex.selector);
@@ -721,84 +684,59 @@ contract FixedMandateTest is Test {
 
         vm.prank(other);
         executor.settle(mandate, 1);
+        vm.snapshotGasLastCall("FixedMandate", "settle.permissionless.subsequent");
         (,,, uint256 settledCount) = executor.mandateStates(executor.mandateId(mandate));
         assertEq(settledCount, 2, "two distinct indices");
+        assertEq(token.balanceOf(recipient), 2 * GROSS, "both occurrences pay full gross");
+        assertEq(token.balanceOf(biller), 0, "biller submitter receives no funds");
+        assertEq(token.balanceOf(other), 0, "other submitter receives no funds");
     }
 
-    function test_OpenAndNamedSettlerPoliciesAndBillerFallback() public {
-        IFixedMandate.Mandate memory openMandate = _openMandate(_defaultMandate(36));
-        vm.prank(other);
-        executor.settle(openMandate, 0);
-        vm.snapshotGasLastCall("FixedMandate", "settle.open.noFee.first");
-
-        IFixedMandate.Mandate memory namedMandate = _defaultMandate(37);
-        namedMandate.settler = settler;
-        namedMandate.settlerFeePerPayment = FEE;
-        namedMandate = _openMandate(namedMandate);
-        vm.prank(other);
-        vm.expectRevert(IFixedMandate.InvalidSettler.selector);
-        executor.settle(namedMandate, 0);
+    function test_BillerSubmissionHasIdenticalEconomicsToAnyCaller() public {
+        IFixedMandate.Mandate memory billerSubmitted = _openMandate(_defaultMandate(36));
+        IFixedMandate.Mandate memory otherSubmitted = _openMandate(_defaultMandate(37));
 
         vm.prank(biller);
-        executor.settle(namedMandate, 0);
-        assertEq(token.balanceOf(biller), 0, "biller fee waived");
-        assertEq(token.balanceOf(recipient), 2 * GROSS, "full gross on biller fallback");
+        executor.settle(billerSubmitted, 0);
+        vm.prank(other);
+        executor.settle(otherSubmitted, 0);
+
+        assertEq(token.balanceOf(recipient), 2 * GROSS, "each caller delivers full gross");
+        assertEq(token.balanceOf(biller), 0, "biller receives no protocol funds");
+        assertEq(token.balanceOf(other), 0, "other caller receives no protocol funds");
     }
 
-    function test_BillerSettlementWaivesFeeAndUsesOneTransfer() public {
+    function test_SettlementUsesExactlyOneTransferFrom() public {
         ReentrantMockERC20 countingToken = new ReentrantMockERC20();
         IFixedMandate.Mandate memory mandate = _defaultMandate(38);
         mandate.token = address(countingToken);
-        mandate.settler = settler;
-        mandate.settlerFeePerPayment = FEE;
         mandate = _openMandate(mandate);
         countingToken.mint(payer, GROSS);
         vm.prank(payer);
         countingToken.approve(address(executor), GROSS);
 
-        vm.prank(biller);
+        vm.prank(other);
         executor.settle(mandate, 0);
 
         assertEq(countingToken.transferFromCount(), 1, "single transfer");
         assertEq(countingToken.balanceOf(recipient), GROSS, "recipient full gross");
-        assertEq(countingToken.balanceOf(biller), 0, "no biller reward");
+        assertEq(countingToken.balanceOf(other), 0, "submitter receives no funds");
     }
 
-    function test_NonBillerReceivesExactFeeOnEveryCatchUpPayment() public {
+    function test_DifferentPermissionlessCallersCanSubmitCatchUpPaymentsWithoutRewards() public {
         IFixedMandate.Mandate memory mandate = _defaultMandate(39);
-        mandate.settler = settler;
-        mandate.settlerFeePerPayment = FEE;
         mandate = _openMandate(mandate);
         vm.warp(START + 2 * PERIOD);
 
-        for (uint256 i; i < 3; ++i) {
-            vm.prank(settler);
-            executor.settle(mandate, i);
-        }
-
-        assertEq(token.balanceOf(settler), 3 * FEE, "fee per occurrence");
-        assertEq(token.balanceOf(recipient), 3 * (GROSS - FEE), "recipient net per occurrence");
-    }
-
-    function test_NamedSettlerAndBillerRaceOnOneCounter() public {
-        IFixedMandate.Mandate memory mandate = _defaultMandate(40);
-        mandate.settler = settler;
-        mandate.settlerFeePerPayment = FEE;
-        mandate = _openMandate(mandate);
-        vm.warp(START + PERIOD);
-
         vm.prank(biller);
         executor.settle(mandate, 0);
-        vm.snapshotGasLastCall("FixedMandate", "settle.biller.feeWaived.first");
-        vm.prank(settler);
-        vm.expectRevert(IFixedMandate.UnexpectedPaymentIndex.selector);
-        executor.settle(mandate, 0);
-
-        vm.prank(settler);
+        vm.prank(other);
         executor.settle(mandate, 1);
-        vm.snapshotGasLastCall("FixedMandate", "settle.named.fee.subsequent");
-        assertEq(token.balanceOf(recipient), GROSS + (GROSS - FEE), "caller-specific recipient net");
-        assertEq(token.balanceOf(settler), FEE, "only settler-submitted occurrence rewarded");
+        executor.settle(mandate, 2);
+
+        assertEq(token.balanceOf(recipient), 3 * GROSS, "recipient full gross per occurrence");
+        assertEq(token.balanceOf(biller), 0, "biller receives no protocol funds");
+        assertEq(token.balanceOf(other), 0, "other caller receives no protocol funds");
     }
 
     function test_SeparateMandatesMaintainIndependentCounters() public {
@@ -826,7 +764,7 @@ contract FixedMandateTest is Test {
         executor.settle(mandate, 0);
 
         mandate = _openMandate(mandate);
-        IFixedMandate.Mandate memory alteredMandate = mandate;
+        IFixedMandate.Mandate memory alteredMandate = _defaultMandate(44);
         alteredMandate.recipient = other;
         vm.prank(other);
         vm.expectRevert(IFixedMandate.MandateNotOpen.selector);
@@ -1142,20 +1080,134 @@ contract FixedMandateTest is Test {
         assertEq(debitToken.balanceOf(payer), 0, "payer can be debited above nominal");
     }
 
-    function test_ReentrancyOnPrincipalTransferConsumesOnlyUnlockedPayments() public {
-        _assertOpenSettlementReentrancyIsBounded(1);
+    function test_CallbackSubmitterCanSettleNextUnlockedOccurrence() public {
+        ReentrantMockERC20 reentrantToken = new ReentrantMockERC20();
+        IFixedMandate.Mandate memory mandate = _defaultMandate(91);
+        mandate.token = address(reentrantToken);
+        mandate.totalPayments = 2;
+        mandate = _openMandate(mandate);
+        reentrantToken.mint(payer, 2 * GROSS);
+        vm.prank(payer);
+        reentrantToken.approve(address(executor), 2 * GROSS);
+        vm.warp(START + PERIOD);
+
+        bytes memory callbackData = abi.encodeCall(IFixedMandate.settle, (mandate, 1));
+        reentrantToken.configureCallback(address(executor), callbackData, 1, false, false);
+
+        uint256 payerBefore = reentrantToken.balanceOf(payer);
+        vm.recordLogs();
+        vm.prank(other);
+        executor.settle(mandate, 0);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        (,,, uint256 settledPaymentCount) = executor.mandateStates(executor.mandateId(mandate));
+        assertEq(settledPaymentCount, 2, "outer and nested unlocked payments consumed");
+        assertTrue(reentrantToken.callbackAttempted(), "callback attempted");
+        assertTrue(reentrantToken.callbackSucceeded(), "next unlocked payment settled");
+        assertEq(reentrantToken.transferFromCount(), 2, "one transfer per occurrence");
+        assertEq(payerBefore - reentrantToken.balanceOf(payer), 2 * GROSS, "payer debited two full gross payments");
+        assertEq(reentrantToken.balanceOf(recipient), 2 * GROSS, "recipient receives both full gross payments");
+        assertEq(reentrantToken.balanceOf(other), 0, "outer submitter receives no funds");
+        assertEq(reentrantToken.balanceOf(address(reentrantToken)), 0, "callback submitter receives no funds");
+        _assertSettlementLogOrder(logs, executor.mandateId(mandate));
+
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 2);
     }
 
-    function test_ReentrancyOnFeeTransferConsumesOnlyUnlockedPayments() public {
-        _assertOpenSettlementReentrancyIsBounded(2);
+    function test_CallbackCannotReplayCurrentPaymentIndex() public {
+        ReentrantMockERC20 reentrantToken = new ReentrantMockERC20();
+        IFixedMandate.Mandate memory mandate = _defaultMandate(92);
+        mandate.token = address(reentrantToken);
+        mandate.totalPayments = 2;
+        mandate = _openMandate(mandate);
+        reentrantToken.mint(payer, 2 * GROSS);
+        vm.prank(payer);
+        reentrantToken.approve(address(executor), 2 * GROSS);
+        vm.warp(START + PERIOD);
+
+        bytes memory callbackData = abi.encodeCall(IFixedMandate.settle, (mandate, 0));
+        reentrantToken.configureCallback(address(executor), callbackData, 1, false, false);
+        vm.prank(other);
+        executor.settle(mandate, 0);
+
+        (,,, uint256 settledPaymentCount) = executor.mandateStates(executor.mandateId(mandate));
+        assertEq(settledPaymentCount, 1, "replayed current index consumes nothing");
+        assertTrue(reentrantToken.callbackAttempted(), "callback attempted");
+        assertFalse(reentrantToken.callbackSucceeded(), "stale callback rejected");
+        assertEq(
+            bytes4(reentrantToken.callbackReturnData()),
+            IFixedMandate.UnexpectedPaymentIndex.selector,
+            "current index is stale during callback"
+        );
+        assertEq(reentrantToken.balanceOf(recipient), GROSS, "only outer occurrence paid");
+
+        executor.settle(mandate, 1);
+        (,,, settledPaymentCount) = executor.mandateStates(executor.mandateId(mandate));
+        assertEq(settledPaymentCount, 2, "next index remains available");
     }
 
-    function test_NamedSettlerBlocksTokenReentrancyOnPrincipalTransfer() public {
-        _assertNamedSettlerBlocksTokenReentrancy(1);
+    function test_CallbackCannotRedirectPayment() public {
+        ReentrantMockERC20 reentrantToken = new ReentrantMockERC20();
+        IFixedMandate.Mandate memory mandate = _defaultMandate(93);
+        mandate.token = address(reentrantToken);
+        mandate.totalPayments = 2;
+        mandate = _openMandate(mandate);
+        reentrantToken.mint(payer, 2 * GROSS);
+        vm.prank(payer);
+        reentrantToken.approve(address(executor), 2 * GROSS);
+        vm.warp(START + PERIOD);
+
+        IFixedMandate.Mandate memory redirected = _defaultMandate(93);
+        redirected.token = address(reentrantToken);
+        redirected.totalPayments = 2;
+        redirected.recipient = other;
+        bytes memory callbackData = abi.encodeCall(IFixedMandate.settle, (redirected, 1));
+        reentrantToken.configureCallback(address(executor), callbackData, 1, false, false);
+        vm.prank(other);
+        executor.settle(mandate, 0);
+
+        (,,, uint256 settledPaymentCount) = executor.mandateStates(executor.mandateId(mandate));
+        (bool redirectedOpened,,, uint256 redirectedCount) = executor.mandateStates(executor.mandateId(redirected));
+        assertEq(settledPaymentCount, 1, "only original occurrence consumed");
+        assertFalse(redirectedOpened, "redirected mandate is not open");
+        assertEq(redirectedCount, 0, "redirected mandate state unchanged");
+        assertFalse(reentrantToken.callbackSucceeded(), "redirected callback rejected");
+        assertEq(bytes4(reentrantToken.callbackReturnData()), IFixedMandate.MandateNotOpen.selector);
+        assertEq(reentrantToken.balanceOf(recipient), GROSS, "pinned recipient paid");
+        assertEq(reentrantToken.balanceOf(other), 0, "replacement recipient and submitter receive nothing");
     }
 
-    function test_NamedSettlerBlocksTokenReentrancyOnFeeTransfer() public {
-        _assertNamedSettlerBlocksTokenReentrancy(2);
+    function test_OuterTransferFailureRollsBackNestedStateAndEvents() public {
+        ReentrantMockERC20 reentrantToken = new ReentrantMockERC20();
+        IFixedMandate.Mandate memory mandate = _defaultMandate(94);
+        mandate.token = address(reentrantToken);
+        mandate.totalPayments = 2;
+        mandate = _openMandate(mandate);
+        reentrantToken.mint(payer, 2 * GROSS);
+        vm.prank(payer);
+        reentrantToken.approve(address(executor), 2 * GROSS);
+        vm.warp(START + PERIOD);
+
+        bytes memory callbackData = abi.encodeCall(IFixedMandate.settle, (mandate, 1));
+        reentrantToken.configureCallback(address(executor), callbackData, 1, false, true);
+        uint256 allowanceBefore = reentrantToken.allowance(payer, address(executor));
+        bytes32 id = executor.mandateId(mandate);
+
+        vm.prank(other);
+        vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(reentrantToken)));
+        executor.settle(mandate, 0);
+
+        // The exact SafeERC20 failure is returned only after the nested settlement succeeds. The enclosing
+        // revert atomically discards both PaymentSettled logs together with the state and token effects below.
+        (,,, uint256 settledPaymentCount) = executor.mandateStates(id);
+        assertEq(settledPaymentCount, 0, "outer failure rolls back both counts");
+        assertEq(reentrantToken.balanceOf(payer), 2 * GROSS, "payer debit rolled back");
+        assertEq(reentrantToken.balanceOf(recipient), 0, "recipient credits rolled back");
+        assertEq(reentrantToken.balanceOf(other), 0, "outer submitter receives nothing");
+        assertEq(reentrantToken.balanceOf(address(reentrantToken)), 0, "callback submitter receives nothing");
+        assertEq(reentrantToken.allowance(payer, address(executor)), allowanceBefore, "allowance rolled back");
+        assertEq(reentrantToken.transferFromCount(), 0, "token transfer state rolled back");
     }
 
     // Fuzz coverage
@@ -1193,21 +1245,20 @@ contract FixedMandateTest is Test {
         assertEq(edgeExecutor.unlockedPaymentCount(mandate), type(uint256).max);
     }
 
-    function testFuzz_ExternalSettlementConservesExactGross(uint96 rawGross, uint96 rawFee) public {
-        uint256 gross = bound(uint256(rawGross), 2, type(uint96).max);
-        uint256 fee = bound(uint256(rawFee), 0, gross - 1);
+    function testFuzz_PermissionlessSettlementTransfersFullGross(uint96 rawGross) public {
+        uint256 gross = bound(uint256(rawGross), 1, type(uint96).max);
         IFixedMandate.Mandate memory mandate = _defaultMandate(81);
         mandate.payerGrossPerPayment = gross;
-        mandate.settlerFeePerPayment = fee;
         mandate = _openMandate(mandate);
         token.mint(payer, gross);
 
         uint256 payerBefore = token.balanceOf(payer);
+        uint256 submitterBefore = token.balanceOf(other);
         vm.prank(other);
         executor.settle(mandate, 0);
         assertEq(payerBefore - token.balanceOf(payer), gross, "payer gross");
-        assertEq(token.balanceOf(recipient), gross - fee, "recipient net");
-        assertEq(token.balanceOf(other), fee, "caller fee");
+        assertEq(token.balanceOf(recipient), gross, "recipient gross");
+        assertEq(token.balanceOf(other), submitterBefore, "submitter receives no funds");
     }
 
     function testFuzz_SameNonceCannotOpenDifferentFixedMandates(uint8 bitPos, bytes32 alternateTermsHash) public {
@@ -1231,10 +1282,8 @@ contract FixedMandateTest is Test {
             payer: payer,
             biller: biller,
             recipient: recipient,
-            settler: address(0),
             token: address(token),
             payerGrossPerPayment: GROSS,
-            settlerFeePerPayment: 0,
             periodLength: PERIOD,
             totalPayments: 12,
             termsHash: TERMS_HASH,
@@ -1257,81 +1306,6 @@ contract FixedMandateTest is Test {
     function _expectInvalidMandate(IFixedMandate.Mandate memory mandate) internal {
         vm.expectRevert(IFixedMandate.InvalidMandate.selector);
         executor.openMandate(mandate, START + 1 hours, START + 1 hours, hex"", hex"");
-    }
-
-    function _assertOpenSettlementReentrancyIsBounded(uint256 callbackTransferNumber) internal {
-        ReentrantMockERC20 reentrantToken = new ReentrantMockERC20();
-        IFixedMandate.Mandate memory mandate = _defaultMandate(90 + callbackTransferNumber);
-        mandate.token = address(reentrantToken);
-        mandate.settlerFeePerPayment = FEE;
-        mandate.totalPayments = 2;
-        mandate = _openMandate(mandate);
-        reentrantToken.mint(payer, 3 * GROSS);
-        vm.prank(payer);
-        reentrantToken.approve(address(executor), type(uint256).max);
-        vm.warp(START + PERIOD);
-
-        bytes memory callbackData = abi.encodeCall(IFixedMandate.settle, (mandate, 1));
-        reentrantToken.configureCallback(address(executor), callbackData, callbackTransferNumber, false);
-
-        uint256 payerBefore = reentrantToken.balanceOf(payer);
-        vm.recordLogs();
-        vm.prank(other);
-        executor.settle(mandate, 0);
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-
-        (,,, uint256 settledPaymentCount) = executor.mandateStates(executor.mandateId(mandate));
-        assertEq(settledPaymentCount, 2, "outer and nested unlocked payments consumed");
-        assertTrue(reentrantToken.callbackAttempted(), "callback attempted");
-        assertTrue(reentrantToken.callbackSucceeded(), "next unlocked payment settled");
-        assertEq(payerBefore - reentrantToken.balanceOf(payer), 2 * GROSS, "only signed gross per payment debited");
-        assertEq(reentrantToken.balanceOf(recipient), 2 * (GROSS - FEE), "recipient receives both net payments");
-        assertEq(reentrantToken.balanceOf(other), FEE, "outer caller receives outer fee");
-        assertEq(reentrantToken.balanceOf(address(reentrantToken)), FEE, "nested caller receives nested fee");
-        _assertSettlementLogOrder(logs, executor.mandateId(mandate));
-
-        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
-        vm.prank(other);
-        executor.settle(mandate, 2);
-    }
-
-    function _assertNamedSettlerBlocksTokenReentrancy(uint256 callbackTransferNumber) internal {
-        ReentrantMockERC20 reentrantToken = new ReentrantMockERC20();
-        IFixedMandate.Mandate memory mandate = _defaultMandate(100 + callbackTransferNumber);
-        mandate.token = address(reentrantToken);
-        mandate.settler = settler;
-        mandate.settlerFeePerPayment = FEE;
-        mandate.totalPayments = 2;
-        mandate = _openMandate(mandate);
-        reentrantToken.mint(payer, 2 * GROSS);
-        vm.prank(payer);
-        reentrantToken.approve(address(executor), type(uint256).max);
-        vm.warp(START + PERIOD);
-
-        bytes memory callbackData = abi.encodeCall(IFixedMandate.settle, (mandate, 1));
-        reentrantToken.configureCallback(address(executor), callbackData, callbackTransferNumber, false);
-
-        vm.prank(settler);
-        executor.settle(mandate, 0);
-        (,,, uint256 countAfterCallback) = executor.mandateStates(executor.mandateId(mandate));
-        assertEq(countAfterCallback, 1, "unauthorized callback consumes no payment");
-        assertTrue(reentrantToken.callbackAttempted(), "callback attempted");
-        assertFalse(reentrantToken.callbackSucceeded(), "token is not the named settler");
-        assertEq(
-            bytes4(reentrantToken.callbackReturnData()),
-            IFixedMandate.InvalidSettler.selector,
-            "named settler policy rejects callback"
-        );
-        assertEq(reentrantToken.balanceOf(address(reentrantToken)), 0, "token receives no settler fee");
-        assertEq(reentrantToken.balanceOf(settler), FEE, "named settler receives outer fee");
-
-        vm.prank(settler);
-        executor.settle(mandate, 1);
-        (,,, uint256 finalSettledPaymentCount) = executor.mandateStates(executor.mandateId(mandate));
-        assertEq(finalSettledPaymentCount, 2, "named settler consumes next payment");
-        assertEq(reentrantToken.balanceOf(recipient), 2 * (GROSS - FEE), "recipient receives both net payments");
-        assertEq(reentrantToken.balanceOf(settler), 2 * FEE, "named settler receives both fees");
-        assertEq(reentrantToken.balanceOf(address(reentrantToken)), 0, "token never receives a settler fee");
     }
 
     function _assertSettlementLogOrder(Vm.Log[] memory logs, bytes32 expectedMandateId) internal view {
@@ -1400,15 +1374,13 @@ contract FixedMandateTest is Test {
         return keccak256(
             abi.encode(
                 keccak256(
-                    "Mandate(address payer,address biller,address recipient,address settler,address token,uint256 payerGrossPerPayment,uint256 settlerFeePerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+                    "Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
                 ),
                 mandate.payer,
                 mandate.biller,
                 mandate.recipient,
-                mandate.settler,
                 mandate.token,
                 mandate.payerGrossPerPayment,
-                mandate.settlerFeePerPayment,
                 mandate.periodLength,
                 mandate.totalPayments,
                 mandate.termsHash,

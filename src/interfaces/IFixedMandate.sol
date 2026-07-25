@@ -15,19 +15,14 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
     struct Mandate {
         /// @notice Token holder whose ERC-20 allowance is spent by the executor.
         address payer;
-        /// @notice Party accepting the mandate and retaining direct settlement authority.
+        /// @notice Party accepting the mandate.
         address biller;
         /// @notice Pinned recipient for settlement proceeds.
         address recipient;
-        /// @notice Named external settlement caller. `address(0)` permits any external caller.
-        address settler;
         /// @notice ERC-20 token pulled from `payer`.
         address token;
         /// @notice Exact nominal payer gross for every payment, in raw token units.
         uint256 payerGrossPerPayment;
-        /// @notice Exact reward deducted from payer gross for a non-biller settlement caller.
-        /// @dev Zero disables the reward. Biller settlement always waives this reward.
-        uint256 settlerFeePerPayment;
         /// @notice Fixed interval in seconds between payment unlocks.
         uint256 periodLength;
         /// @notice Total number of payments. Zero represents an open-ended schedule.
@@ -72,18 +67,13 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
     error UnexpectedPaymentIndex();
     /// @notice The next payment has not unlocked yet or a finite schedule is complete.
     error PaymentNotUnlocked();
-    /// @notice Caller is neither the biller nor an eligible external settler.
-    error InvalidSettler();
-
     /// @notice Emitted when payer authorization and biller acceptance open a fixed mandate.
     /// @param mandateId EIP-712 fixed mandate digest used as the state key.
     /// @param payer Token holder whose allowance may be spent.
     /// @param biller Party that accepted the fixed mandate.
     /// @param token ERC-20 token pulled from the payer.
     /// @param recipient Pinned recipient for settlement proceeds.
-    /// @param settler Named external caller, or zero for open settlement.
     /// @param payerGrossPerPayment Exact nominal payer gross for each occurrence.
-    /// @param settlerFeePerPayment Exact fee for an eligible non-biller caller.
     /// @param periodLength Seconds between occurrence unlocks.
     /// @param totalPayments Finite count, or zero for an open-ended schedule. The current implementation's
     /// `uint120` settlement counter limits successful occurrences to `type(uint120).max`.
@@ -96,9 +86,7 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
         address indexed biller,
         address token,
         address recipient,
-        address settler,
         uint256 payerGrossPerPayment,
-        uint256 settlerFeePerPayment,
         uint256 periodLength,
         uint256 totalPayments,
         uint256 startedAt,
@@ -115,8 +103,7 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
     /// @param recipient Proceeds recipient pinned by the mandate.
     /// @param token ERC-20 token transferred.
     /// @param payerGross Exact nominal payer gross for this occurrence.
-    /// @param fee Actual reward paid to `settlementCaller`; zero when the biller settles.
-    /// @param settlementCaller Caller that submitted settlement.
+    /// @param submitter Immediate caller that submitted settlement, recorded only as factual provenance.
     event PaymentSettled(
         bytes32 indexed mandateId,
         uint256 indexed paymentIndex,
@@ -125,8 +112,7 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
         address recipient,
         address token,
         uint256 payerGross,
-        uint256 fee,
-        address settlementCaller
+        address submitter
     );
 
     /// @notice Emitted when a payer or biller cancels an opened fixed mandate.
@@ -176,9 +162,9 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
     ) external returns (bytes32 id);
 
     /// @notice Settles exactly one unlocked fixed payment.
-    /// @dev The biller may always call. Otherwise the named settler must call, or any caller may act
-    /// when the mandate settler is zero. `nextPaymentIndex` prevents stale calls from consuming a
-    /// later occurrence. A biller call waives the configured fee and sends full payer gross to recipient.
+    /// @dev Any caller may submit settlement. The caller gains no authority over the mandate and receives no
+    /// protocol funds. A successful call makes one transfer of the full `payerGrossPerPayment` from the payer
+    /// to the pinned recipient. `nextPaymentIndex` prevents stale or racing calls from consuming a later occurrence.
     /// @param mandate Opened fixed mandate terms.
     /// @param nextPaymentIndex Exact next unsettled occurrence expected by the caller.
     function settle(Mandate calldata mandate, uint256 nextPaymentIndex) external;

@@ -131,7 +131,6 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
     uint256 internal constant START = 1_700_000_000;
     uint256 internal constant PERIOD = 30 days;
     uint256 internal constant GROSS = 100e6;
-    uint256 internal constant FEE = 5e6;
     uint256 internal constant INITIAL_BALANCE = 1_000_000e6;
 
     function _setUpInvariant(uint256 totalPayments, bool includeCancellation) internal {
@@ -145,10 +144,8 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
             payer: payer,
             biller: biller,
             recipient: recipient,
-            settler: address(0),
             token: address(token),
             payerGrossPerPayment: GROSS,
-            settlerFeePerPayment: FEE,
             periodLength: PERIOD,
             totalPayments: totalPayments,
             termsHash: keccak256("fixed invariant terms"),
@@ -193,13 +190,12 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
         if (mandate.totalPayments != 0) assertLe(settledCount, mandate.totalPayments, "finite bound");
     }
 
-    function invariant_StandardTokenGrossIsConserved() public view {
+    function invariant_StandardTokenTransfersFullGrossAndPaysNoSubmitterReward() public view {
         uint256 settledCount = handler.ghostSuccessfulSettlements();
         uint256 payerDebit = handler.initialPayerBalance() - token.balanceOf(payer);
         assertEq(payerDebit, settledCount * GROSS, "payer debit");
-        assertEq(token.balanceOf(recipient), settledCount * (GROSS - FEE), "recipient credits");
-        assertEq(token.balanceOf(address(handler)), settledCount * FEE, "caller fees");
-        assertEq(token.balanceOf(recipient) + token.balanceOf(address(handler)), payerDebit, "gross conservation");
+        assertEq(token.balanceOf(recipient), settledCount * GROSS, "recipient credits");
+        assertEq(token.balanceOf(address(handler)), 0, "handler protocol reward");
     }
 
     function invariant_CancellationFreezesSettlementCount() public view {
