@@ -21,8 +21,8 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
         address recipient;
         /// @notice ERC-20 token pulled from `payer`.
         address token;
-        /// @notice Exact nominal payer gross for every payment, in raw token units.
-        uint256 payerGrossPerPayment;
+        /// @notice Exact nominal amount for every payment, in raw token units.
+        uint256 amountPerPayment;
         /// @notice Fixed interval in seconds between payment unlocks.
         uint256 periodLength;
         /// @notice Total number of payments. Zero represents an open-ended schedule.
@@ -73,7 +73,7 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
     /// @param biller Party that accepted the fixed mandate.
     /// @param token ERC-20 token pulled from the payer.
     /// @param recipient Pinned recipient for settlement proceeds.
-    /// @param payerGrossPerPayment Exact nominal payer gross for each occurrence.
+    /// @param amountPerPayment Exact nominal amount for each occurrence.
     /// @param periodLength Seconds between occurrence unlocks.
     /// @param totalPayments Finite count, or zero for an open-ended schedule. The current implementation's
     /// `uint120` settlement counter limits successful occurrences to `type(uint120).max`.
@@ -86,7 +86,7 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
         address indexed biller,
         address token,
         address recipient,
-        uint256 payerGrossPerPayment,
+        uint256 amountPerPayment,
         uint256 periodLength,
         uint256 totalPayments,
         uint256 startedAt,
@@ -102,7 +102,7 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
     /// @param biller Party that accepted the fixed mandate.
     /// @param recipient Proceeds recipient pinned by the mandate.
     /// @param token ERC-20 token transferred.
-    /// @param payerGross Exact nominal payer gross for this occurrence.
+    /// @param amountPerPayment Exact nominal amount for this occurrence.
     /// @param submitter Immediate caller that submitted settlement, recorded only as factual provenance.
     event PaymentSettled(
         bytes32 indexed mandateId,
@@ -111,7 +111,7 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
         address biller,
         address recipient,
         address token,
-        uint256 payerGross,
+        uint256 amountPerPayment,
         address submitter
     );
 
@@ -163,7 +163,7 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
 
     /// @notice Settles exactly one unlocked fixed payment.
     /// @dev Any caller may submit settlement. The caller gains no authority over the mandate and receives no
-    /// protocol funds. A successful call makes one transfer of the full `payerGrossPerPayment` from the payer
+    /// protocol funds. A successful call transfers `amountPerPayment` once from the payer
     /// to the pinned recipient. `nextPaymentIndex` prevents stale or racing calls from consuming a later occurrence.
     /// @param mandate Opened fixed mandate terms.
     /// @param nextPaymentIndex Exact next unsettled occurrence expected by the caller.

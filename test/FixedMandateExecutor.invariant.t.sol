@@ -130,7 +130,7 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
 
     uint256 internal constant START = 1_700_000_000;
     uint256 internal constant PERIOD = 30 days;
-    uint256 internal constant GROSS = 100e6;
+    uint256 internal constant AMOUNT = 100e6;
     uint256 internal constant INITIAL_BALANCE = 1_000_000e6;
 
     function _setUpInvariant(uint256 totalPayments, bool includeCancellation) internal {
@@ -145,7 +145,7 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
             biller: biller,
             recipient: recipient,
             token: address(token),
-            payerGrossPerPayment: GROSS,
+            amountPerPayment: AMOUNT,
             periodLength: PERIOD,
             totalPayments: totalPayments,
             termsHash: keccak256("fixed invariant terms"),
@@ -190,11 +190,11 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
         if (mandate.totalPayments != 0) assertLe(settledCount, mandate.totalPayments, "finite bound");
     }
 
-    function invariant_StandardTokenTransfersFullGrossAndPaysNoSubmitterReward() public view {
+    function invariant_StandardTokenTransfersFullAmountAndPaysNoSubmitterReward() public view {
         uint256 settledCount = handler.ghostSuccessfulSettlements();
         uint256 payerDebit = handler.initialPayerBalance() - token.balanceOf(payer);
-        assertEq(payerDebit, settledCount * GROSS, "payer debit");
-        assertEq(token.balanceOf(recipient), settledCount * GROSS, "recipient credits");
+        assertEq(payerDebit, settledCount * AMOUNT, "payer debit");
+        assertEq(token.balanceOf(recipient), settledCount * AMOUNT, "recipient credits");
         assertEq(token.balanceOf(address(handler)), 0, "handler protocol reward");
     }
 

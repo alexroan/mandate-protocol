@@ -15,7 +15,7 @@ opening anchors the schedule and unlocks the first occurrence
 each elapsed period unlocks one more occurrence
 any address may submit settlement for the exact next unlocked occurrence
 FixedMandate enforces the opened and uncancelled schedule, pinned token and recipient, full amount, timing, and payment index
-one transfer moves the full signed payer gross to the recipient; the submitter receives no protocol funds
+one transfer moves the full signed amount to the recipient; the submitter receives no protocol funds
 ```
 
 ## Status
@@ -37,7 +37,7 @@ Implemented:
 - exact recurring payments with a contract-generated start and immediate first unlock
 - finite or open-ended schedules with sequential catch-up for missed payments
 - permissionless settlement submission: any address may settle the exact next unlocked occurrence
-- exactly one nominal full-gross transfer from the payer to the pinned recipient for every successful occurrence
+- exactly one nominal transfer of the full amount from the payer to the pinned recipient for every successful occurrence
 - no protocol payment or special settlement authority for the submitter, including when the submitter is the biller
 - settlement events emitted after consuming the payment index and before token calls, preserving index order across
   nested settlement callbacks
@@ -65,7 +65,7 @@ struct Mandate {
     address biller;
     address recipient;
     address token;
-    uint256 payerGrossPerPayment;
+    uint256 amountPerPayment;
     uint256 periodLength;
     uint256 totalPayments; // zero means open-ended
     bytes32 termsHash;
@@ -83,11 +83,11 @@ deployment-specific. The domain name and version are `FixedMandate` and `1`; ver
 this is still the first undeployed schema. The canonical type strings are:
 
 ```text
-Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
 
-MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
 
-MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
 ```
 
 Payer authorization signs `MandateAuthorization`, while biller acceptance signs `MandateAcceptance`. Both wrappers
@@ -114,13 +114,13 @@ Every successful call makes exactly one nominal transfer:
 IERC20(mandate.token).safeTransferFrom(
     mandate.payer,
     mandate.recipient,
-    mandate.payerGrossPerPayment
+    mandate.amountPerPayment
 );
 ```
 
 The submitter cannot redirect this transfer and receives no funds from `FixedMandate`. Under standard ERC-20 semantics,
 and when payer and recipient are distinct, the payer debit and recipient credit both equal
-`payerGrossPerPayment`. If payer and recipient are the same address, the self-transfer can consume allowance without the
+`amountPerPayment`. If payer and recipient are the same address, the self-transfer can consume allowance without the
 same net balance movement.
 
 **Collection is immediate and permissionless after unlock.** Any address may cause the next unlocked occurrence to be
@@ -151,7 +151,7 @@ event MandateOpened(
     address indexed biller,
     address token,
     address recipient,
-    uint256 payerGrossPerPayment,
+    uint256 amountPerPayment,
     uint256 periodLength,
     uint256 totalPayments,
     uint256 startedAt,
@@ -166,7 +166,7 @@ event PaymentSettled(
     address biller,
     address recipient,
     address token,
-    uint256 payerGross,
+    uint256 amountPerPayment,
     address submitter
 );
 ```
@@ -235,7 +235,7 @@ forge script script/DeployFixedMandate.s.sol:DeployFixedMandate \
 ## Security Notes
 
 `FixedMandate` deliberately has **no token allowlist**. Any token address can be signed into a mandate as permissionless
-input. Settlement reverts if the token address has no code, but the nominal full-gross accounting assumes standard
+input. Settlement reverts if the token address has no code, but nominal amount accounting assumes standard
 ERC-20 semantics: `transferFrom(from, to, amount)` debits exactly `amount` and credits exactly `amount`.
 Fee-on-transfer, rebasing, excessive-debit, pausable, blocklist, callback-heavy, and malicious tokens are outside the
 current economic guarantee boundary. This token-level fee-on-transfer warning is unrelated to protocol-funded
@@ -257,7 +257,7 @@ Cancellation stops one mandate. Reducing or revoking ERC-20 allowance prevents p
 but does not cancel the mandate. Any address can collect several accrued payments consecutively, and an open-ended
 schedule has no payer-selected lifetime count before cancellation. Cancellation and allowance changes take effect only
 according to onchain ordering; an already ordered settlement may land first. Applications should display currently
-unlocked arrears and immediate gross exposure, not only the per-payment amount, and must not present offchain grace or
+unlocked arrears and immediate nominal exposure, not only the per-payment amount, and must not present offchain grace or
 pacing as an onchain guarantee.
 
 ## Future Work

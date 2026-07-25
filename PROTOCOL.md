@@ -39,12 +39,12 @@ spender may transfer up to X tokens
 A fixed mandate narrows that allowance into a bilateral recurring-payment right:
 
 ```text
-pull this exact gross amount from this payer
+pull this exact payment amount from this payer
 use only this token
 pay only this recipient
 unlock one occurrence at this fixed cadence
 allow any address to submit the exact next unlocked occurrence
-transfer the full signed gross directly to the pinned recipient
+transfer the full signed amount directly to the pinned recipient
 stop after the signed finite count, or continue until cancellation when the count is zero
 require the next sequential payment index
 stop this mandate when the payer or biller cancels it
@@ -62,7 +62,7 @@ Cancellation does not revoke the underlying token allowance.
 |---|---|
 | Payer | Token holder whose ERC-20 allowance is spent. Authorizes mandate terms or calls directly, and may cancel. |
 | Biller | Commercial counterparty that accepts mandate terms and may cancel. It has no special settlement authority or economics. |
-| Recipient | Address pinned by the mandate as the destination of the full nominal payer gross. |
+| Recipient | Address pinned by the mandate as the destination of the full nominal amount. |
 | Submitter | Any address that submits an opening, signed cancellation, or settlement transaction. Submission grants no party authority and the contract pays the submitter nothing. |
 | `FixedMandate` | Immutable onchain verifier, schedule state machine, and ERC-20 transfer coordinator. |
 | Token | ERC-20 address signed into the mandate. Economic guarantees assume standard transfer semantics. |
@@ -81,7 +81,7 @@ recorded only as factual event provenance; it is not a signed protocol role.
 | `openMandate` | Anyone | Open using payer authorization and biller acceptance. |
 | `openMandateAsPayer` | Payer | Open using payer transaction authority and biller acceptance. |
 | `openMandateAsBiller` | Biller | Open using biller transaction authority and payer authorization. |
-| `settle` | Anyone | Submit exactly the next unlocked payment index; the full gross goes to the pinned recipient. |
+| `settle` | Anyone | Submit exactly the next unlocked payment index; the full amount goes to the pinned recipient. |
 | `cancelMandateAsPayer` | Payer | Cancel one opened mandate using direct transaction authority. |
 | `cancelMandateAsBiller` | Biller | Cancel one opened mandate using direct transaction authority. |
 | `cancelMandateWithPayerSignature` | Anyone | Cancel using payer typed authorization. |
@@ -118,7 +118,7 @@ struct Mandate {
     address biller;
     address recipient;
     address token;
-    uint256 payerGrossPerPayment;
+    uint256 amountPerPayment;
     uint256 periodLength;
     uint256 totalPayments;
     bytes32 termsHash;
@@ -129,7 +129,7 @@ struct Mandate {
 Validation rules are:
 
 - `payer`, `biller`, `recipient`, and `token` must be nonzero;
-- `payerGrossPerPayment` and `periodLength` must be nonzero;
+- `amountPerPayment` and `periodLength` must be nonzero;
 - `totalPayments == 0` selects an open-ended schedule, while a positive value is the intended finite count, subject to
   the implementation limit below;
 - `termsHash` must be nonzero and commits to offchain terms or metadata; and
@@ -249,19 +249,19 @@ Typed objects are:
 The canonical base and nested opening type strings are:
 
 ```text
-Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
 
-MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
 
-MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
 ```
 
 Their type hashes are:
 
 ```text
-Mandate:              0x18add0b5f00bbaad860472e7219507efb46c1084f6a8ab757ceda221580760bf
-MandateAuthorization: 0x1a438fc38a73c4c8b9376257eefd742fc92ac50d5c909c81a143645d1809cb1a
-MandateAcceptance:    0x11d52a36ac858fa40741f69247304faa44104222685420bfed13702c9d1ebf29
+Mandate:              0x2cb7e3a6ce71ea54f5b22fa6a91ad500901576ca2e0bb109f23a0000ed803418
+MandateAuthorization: 0xf9d6fb0adbc3b16b07a472bbfadd3bebbd4c55774935ad15d79ec25e3b656fc2
+MandateAcceptance:    0xe2b64c471e9c56916489f2a1e58382e9d165717620a0a17467ade21ee66f3752
 ```
 
 The nested opening wrappers commit to every `Mandate` field. Any change to payer, biller, recipient, token, amount,
@@ -320,9 +320,9 @@ sequenceDiagram
     E->>E: Require index is unlocked and below finite total
     E->>E: Increment settledPaymentCount
     E-->>I: Emit PaymentSettled with submitter provenance
-    E->>T: transferFrom(payer, recipient, full gross)
-    T->>P: Debit nominal full gross
-    T->>R: Credit nominal full gross
+    E->>T: transferFrom(payer, recipient, amountPerPayment)
+    T->>P: Debit amountPerPayment
+    T->>R: Credit amountPerPayment
 ```
 
 Settlement is permissionless: there is no caller allowlist, operator field, or special biller path. The submitter
@@ -398,15 +398,15 @@ token through this `FixedMandate` deployment.
 Every successful occurrence requests exactly one nominal token transfer:
 
 ```text
-transferFrom(payer, recipient, payerGrossPerPayment)
+transferFrom(payer, recipient, amountPerPayment)
 submitter protocol payment = 0
 ```
 
 For a standard ERC-20 with distinct payer and recipient addresses:
 
 ```text
-payer debit = payerGrossPerPayment
-recipient credit = payerGrossPerPayment
+payer debit = amountPerPayment
+recipient credit = amountPerPayment
 submitter credit = 0
 ```
 
@@ -419,7 +419,7 @@ possible net balance delta: if payer and recipient are the same address, a stand
 allowance while leaving that address's net balance unchanged.
 
 Fee-on-transfer and other non-standard tokens may produce different balance deltas even though `FixedMandate` requests
-the full signed gross exactly once. That token-level behavior is an explicit compatibility boundary, not a protocol
+the full signed amount exactly once. That token-level behavior is an explicit compatibility boundary, not a protocol
 execution fee.
 
 ## Unlock Schedule
@@ -487,7 +487,7 @@ event MandateOpened(
     address indexed biller,
     address token,
     address recipient,
-    uint256 payerGrossPerPayment,
+    uint256 amountPerPayment,
     uint256 periodLength,
     uint256 totalPayments,
     uint256 startedAt,
@@ -502,7 +502,7 @@ event PaymentSettled(
     address biller,
     address recipient,
     address token,
-    uint256 payerGross,
+    uint256 amountPerPayment,
     address submitter
 );
 
@@ -512,7 +512,7 @@ event MandateCancellation(bytes32 indexed mandateId, address indexed payer, addr
 | Event | Indexed fields | Meaning |
 |---|---|---|
 | `MandateOpened` | `mandateId`, `payer`, `biller` | A mandate opened. Non-indexed data contains every remaining signed field plus generated `startedAt`. |
-| `PaymentSettled` | `mandateId`, `paymentIndex`, `payer` | One occurrence settled. Data records biller, recipient, token, payer gross, and immediate submitter. |
+| `PaymentSettled` | `mandateId`, `paymentIndex`, `payer` | One occurrence settled. Data records biller, recipient, token, amount per payment, and immediate submitter. |
 | `MandateCancellation` | `mandateId`, `payer`, `cancelledBy` | Payer or biller authorized cancellation. |
 | `UnorderedNonceInvalidation` | `owner`, `wordPos` | Records the mask ORed into an owner's bitmap; `mask` is non-indexed and may be a no-op. |
 
@@ -544,8 +544,8 @@ Under standard ERC-20 transfer semantics, the contract guarantees its own checks
 - any address may submit settlement, with no special biller path;
 - settlement consumes only the next sequential index;
 - an index cannot settle before it unlocks or beyond a finite total;
-- recipient, token, and exact nominal payer gross are pinned by signed terms;
-- each successful occurrence requests one full-gross transfer to the recipient and no transfer to the submitter;
+- recipient, token, and exact nominal amount are pinned by signed terms;
+- each successful occurrence requests one transfer of the full amount to the recipient and no transfer to the submitter;
 - consuming state before token interactions prevents same-index callback replay; and
 - state changes and events roll back if the token transfer fails.
 
@@ -569,7 +569,7 @@ The contract does not measure token balance deltas. Its economic accounting assu
 - enforcement of an offchain grace period, pause, preferred submitter, retry interval, or collection pacing policy;
 - calendar-month billing semantics;
 - recovery from compromised payer or biller signing authority;
-- a payer-selected finite lifetime count or nominal gross bound when `totalPayments == 0`; or
+- a payer-selected finite lifetime count or nominal-total bound when `totalPayments == 0`; or
 - protection from rapid sequential collection of already-unlocked arrears.
 
 There is no admin pause, token registry, signer registry, proxy upgrade, or owner rescue path in core.
@@ -583,8 +583,8 @@ as needed.
 Cancellation stops one mandate; allowance revocation stops every pull from that payer for that token through this
 `FixedMandate` deployment. Wallets and dashboards should display at least:
 
-- exact gross per payment;
-- currently unlocked but unpaid occurrence count and gross exposure;
+- exact amount per payment;
+- currently unlocked but unpaid occurrence count and nominal exposure;
 - next unlock time;
 - remaining finite occurrences or the fact that the schedule is open-ended;
 - the fact that any address may immediately collect each unlocked sequential occurrence;
@@ -594,7 +594,7 @@ Cancellation stops one mandate; allowance revocation stops every pull from that 
 ### Integration Guidance
 
 Integrations must encode the exact nine-field `Mandate` schema and use the deployed contract address and current chain
-in the EIP-712 domain. Before presenting a signature, they should make the full-gross amount, cadence, finite or
+in the EIP-712 domain. Before presenting a signature, they should make the amount per payment, cadence, finite or
 open-ended count, immediate first unlock, permissionless collection, and arrears exposure explicit.
 
 A transaction service should read `settledPaymentCount` and the unlocked count immediately before submitting. A stale
@@ -678,7 +678,7 @@ For future agents:
 - preserve the three explicit opening routes and their shared payer nonce semantics unless creation is deliberately
   redesigned;
 - preserve the generated start, immediate first unlock, sequential next-index rule, finite/open-ended count semantics,
-  permissionless submission, and one full-gross transfer to the pinned recipient;
+  permissionless submission, and one transfer of the full amount to the pinned recipient;
 - preserve `PaymentSettled` emission after index consumption and before token interactions so callback logs remain
   index-ordered;
 - treat `PaymentSettled.submitter` as factual provenance only, never as protocol authority or a payment recipient;

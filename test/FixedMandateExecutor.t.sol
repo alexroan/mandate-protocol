@@ -33,7 +33,7 @@ contract FixedMandateTest is Test {
 
     uint256 internal constant START = 1_700_000_000;
     uint256 internal constant PERIOD = 30 days;
-    uint256 internal constant GROSS = 100e6;
+    uint256 internal constant AMOUNT = 100e6;
     bytes32 internal constant TERMS_HASH = keccak256("fixed mandate terms v1");
     bytes32 internal constant MANDATE_OPENED_TOPIC = 0xad55e3a0d6b405d919cd1a8df033438d18034f6c46362cd15ff991b4a3a7bd36;
     bytes32 internal constant PAYMENT_SETTLED_TOPIC =
@@ -81,7 +81,7 @@ contract FixedMandateTest is Test {
                     abi.encode(
                         keccak256(
                             bytes(
-                                "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+                                "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
                             )
                         ),
                         structHash,
@@ -99,7 +99,7 @@ contract FixedMandateTest is Test {
                     abi.encode(
                         keccak256(
                             bytes(
-                                "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+                                "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
                             )
                         ),
                         structHash,
@@ -207,8 +207,8 @@ contract FixedMandateTest is Test {
         changed.token = other;
         assertNotEq(executor.mandateId(changed), baseId, "token");
         changed = _defaultMandate(3);
-        changed.payerGrossPerPayment += 1;
-        assertNotEq(executor.mandateId(changed), baseId, "gross");
+        changed.amountPerPayment += 1;
+        assertNotEq(executor.mandateId(changed), baseId, "amount");
         changed = _defaultMandate(3);
         changed.periodLength += 1;
         assertNotEq(executor.mandateId(changed), baseId, "period");
@@ -227,17 +227,17 @@ contract FixedMandateTest is Test {
         IFixedMandate.Mandate memory mandate = _defaultMandate(2);
         mandate.token = address(freshToken);
         mandate = _openMandate(mandate);
-        freshToken.mint(payer, GROSS);
+        freshToken.mint(payer, AMOUNT);
 
         vm.prank(payer);
-        freshToken.approve(other, GROSS);
+        freshToken.approve(other, AMOUNT);
         vm.expectRevert(bytes("ALLOWANCE"));
         executor.settle(mandate, 0);
 
         vm.prank(payer);
-        freshToken.approve(address(executor), GROSS);
+        freshToken.approve(address(executor), AMOUNT);
         executor.settle(mandate, 0);
-        assertEq(freshToken.balanceOf(recipient), GROSS, "fixed approval used");
+        assertEq(freshToken.balanceOf(recipient), AMOUNT, "fixed approval used");
     }
 
     // Opening
@@ -248,7 +248,7 @@ contract FixedMandateTest is Test {
 
         vm.expectEmit(true, true, true, true, address(executor));
         emit IFixedMandate.MandateOpened(
-            id, payer, biller, address(token), recipient, GROSS, PERIOD, 12, START, mandate.nonce, TERMS_HASH
+            id, payer, biller, address(token), recipient, AMOUNT, PERIOD, 12, START, mandate.nonce, TERMS_HASH
         );
         _openMandate(mandate);
 
@@ -404,7 +404,7 @@ contract FixedMandateTest is Test {
         malformed.token = address(0);
         _expectInvalidMandate(malformed);
         malformed = _defaultMandate(17);
-        malformed.payerGrossPerPayment = 0;
+        malformed.amountPerPayment = 0;
         _expectInvalidMandate(malformed);
         malformed = _defaultMandate(17);
         malformed.periodLength = 0;
@@ -418,7 +418,7 @@ contract FixedMandateTest is Test {
         RevertingERC1271Wallet revertingWallet = new RevertingERC1271Wallet();
         IFixedMandate.Mandate memory mandate = _defaultMandate(18);
         mandate.payer = address(revertingWallet);
-        mandate.payerGrossPerPayment = 0;
+        mandate.amountPerPayment = 0;
 
         vm.expectRevert(IFixedMandate.InvalidMandate.selector);
         executor.openMandate(mandate, START + 1 hours, START + 1 hours, hex"", hex"");
@@ -563,7 +563,7 @@ contract FixedMandateTest is Test {
         vm.startSnapshotGas("FixedMandate", "settle.wallet.first");
         billerWallet.execute(address(executor), settleCallData);
         vm.stopSnapshotGas();
-        assertEq(token.balanceOf(recipient), GROSS, "recipient receives full gross");
+        assertEq(token.balanceOf(recipient), AMOUNT, "recipient receives full amount");
         assertEq(token.balanceOf(address(billerWallet)), 0, "submitter receives no protocol funds");
 
         vm.prank(biller);
@@ -576,7 +576,7 @@ contract FixedMandateTest is Test {
 
     // Accrual and permissionless settlement
 
-    function test_AnyCallerCanSettleAndRecipientReceivesFullGross() public {
+    function test_AnyCallerCanSettleAndRecipientReceivesFullAmount() public {
         IFixedMandate.Mandate memory mandate = _defaultMandate(30);
         mandate = _openMandate(mandate);
         bytes32 id = executor.mandateId(mandate);
@@ -585,9 +585,9 @@ contract FixedMandateTest is Test {
         executor.settle(mandate, 0);
         vm.snapshotGasLastCall("FixedMandate", "settle.permissionless.first");
 
-        assertEq(token.balanceOf(recipient), GROSS, "recipient full gross");
+        assertEq(token.balanceOf(recipient), AMOUNT, "recipient full amount");
         assertEq(token.balanceOf(other), 0, "submitter receives no protocol funds");
-        assertEq(token.balanceOf(payer), 100_000e6 - GROSS, "payer gross");
+        assertEq(token.balanceOf(payer), 100_000e6 - AMOUNT, "payer debit");
         (,,, uint256 settledCount) = executor.mandateStates(id);
         assertEq(settledCount, 1, "one payment settled");
     }
@@ -601,7 +601,7 @@ contract FixedMandateTest is Test {
         executor.settle(mandate, 0);
 
         assertEq(token.balanceOf(other), submitterBalanceBefore, "submitter balance unchanged");
-        assertEq(token.balanceOf(recipient), GROSS, "recipient receives full gross");
+        assertEq(token.balanceOf(recipient), AMOUNT, "recipient receives full amount");
     }
 
     function test_PaymentSettledEmitsSubmitterAndNoFee() public {
@@ -610,11 +610,11 @@ contract FixedMandateTest is Test {
         bytes32 id = executor.mandateId(mandate);
 
         vm.expectEmit(true, true, true, true, address(executor));
-        emit IFixedMandate.PaymentSettled(id, 0, payer, biller, recipient, address(token), GROSS, other);
+        emit IFixedMandate.PaymentSettled(id, 0, payer, biller, recipient, address(token), AMOUNT, other);
         vm.prank(other);
         executor.settle(mandate, 0);
 
-        assertEq(token.balanceOf(recipient), GROSS, "event gross equals recipient credit");
+        assertEq(token.balanceOf(recipient), AMOUNT, "event amount equals recipient credit");
         assertEq(token.balanceOf(other), 0, "event submitter receives no funds");
     }
 
@@ -643,7 +643,7 @@ contract FixedMandateTest is Test {
 
         vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
         executor.settle(mandate, 6);
-        assertEq(token.balanceOf(recipient), 6 * GROSS, "catch-up paid");
+        assertEq(token.balanceOf(recipient), 6 * AMOUNT, "catch-up paid");
     }
 
     function test_FiniteScheduleCapsUnlocksAndKeepsArrearsCollectible() public {
@@ -687,7 +687,7 @@ contract FixedMandateTest is Test {
         vm.snapshotGasLastCall("FixedMandate", "settle.permissionless.subsequent");
         (,,, uint256 settledCount) = executor.mandateStates(executor.mandateId(mandate));
         assertEq(settledCount, 2, "two distinct indices");
-        assertEq(token.balanceOf(recipient), 2 * GROSS, "both occurrences pay full gross");
+        assertEq(token.balanceOf(recipient), 2 * AMOUNT, "both occurrences pay full amount");
         assertEq(token.balanceOf(biller), 0, "biller submitter receives no funds");
         assertEq(token.balanceOf(other), 0, "other submitter receives no funds");
     }
@@ -701,7 +701,7 @@ contract FixedMandateTest is Test {
         vm.prank(other);
         executor.settle(otherSubmitted, 0);
 
-        assertEq(token.balanceOf(recipient), 2 * GROSS, "each caller delivers full gross");
+        assertEq(token.balanceOf(recipient), 2 * AMOUNT, "each caller delivers full amount");
         assertEq(token.balanceOf(biller), 0, "biller receives no protocol funds");
         assertEq(token.balanceOf(other), 0, "other caller receives no protocol funds");
     }
@@ -711,15 +711,15 @@ contract FixedMandateTest is Test {
         IFixedMandate.Mandate memory mandate = _defaultMandate(38);
         mandate.token = address(countingToken);
         mandate = _openMandate(mandate);
-        countingToken.mint(payer, GROSS);
+        countingToken.mint(payer, AMOUNT);
         vm.prank(payer);
-        countingToken.approve(address(executor), GROSS);
+        countingToken.approve(address(executor), AMOUNT);
 
         vm.prank(other);
         executor.settle(mandate, 0);
 
         assertEq(countingToken.transferFromCount(), 1, "single transfer");
-        assertEq(countingToken.balanceOf(recipient), GROSS, "recipient full gross");
+        assertEq(countingToken.balanceOf(recipient), AMOUNT, "recipient full amount");
         assertEq(countingToken.balanceOf(other), 0, "submitter receives no funds");
     }
 
@@ -734,7 +734,7 @@ contract FixedMandateTest is Test {
         executor.settle(mandate, 1);
         executor.settle(mandate, 2);
 
-        assertEq(token.balanceOf(recipient), 3 * GROSS, "recipient full gross per occurrence");
+        assertEq(token.balanceOf(recipient), 3 * AMOUNT, "recipient full amount per occurrence");
         assertEq(token.balanceOf(biller), 0, "biller receives no protocol funds");
         assertEq(token.balanceOf(other), 0, "other caller receives no protocol funds");
     }
@@ -1013,15 +1013,15 @@ contract FixedMandateTest is Test {
         assertEq(countAfterAllowanceFailure, 0);
 
         vm.prank(payer);
-        freshToken.approve(address(executor), GROSS);
+        freshToken.approve(address(executor), AMOUNT);
         vm.expectRevert(bytes("BALANCE"));
         executor.settle(mandate, 0);
         (,,, uint256 countAfterBalanceFailure) = executor.mandateStates(executor.mandateId(mandate));
         assertEq(countAfterBalanceFailure, 0);
 
-        freshToken.mint(payer, GROSS);
+        freshToken.mint(payer, AMOUNT);
         executor.settle(mandate, 0);
-        assertEq(freshToken.balanceOf(recipient), GROSS, "retry succeeds");
+        assertEq(freshToken.balanceOf(recipient), AMOUNT, "retry succeeds");
     }
 
     function test_FalseReturnAndNoCodeTokensRevertWithoutConsumingPayment() public {
@@ -1029,9 +1029,9 @@ contract FixedMandateTest is Test {
         IFixedMandate.Mandate memory falseMandate = _defaultMandate(71);
         falseMandate.token = address(falseToken);
         falseMandate = _openMandate(falseMandate);
-        falseToken.mint(payer, GROSS);
+        falseToken.mint(payer, AMOUNT);
         vm.prank(payer);
-        falseToken.approve(address(executor), GROSS);
+        falseToken.approve(address(executor), AMOUNT);
         vm.expectRevert();
         executor.settle(falseMandate, 0);
         (,,, uint256 falseCount) = executor.mandateStates(executor.mandateId(falseMandate));
@@ -1051,11 +1051,11 @@ contract FixedMandateTest is Test {
         IFixedMandate.Mandate memory mandate = _defaultMandate(73);
         mandate.token = address(noReturnToken);
         mandate = _openMandate(mandate);
-        noReturnToken.mint(payer, GROSS);
+        noReturnToken.mint(payer, AMOUNT);
         vm.prank(payer);
-        noReturnToken.approve(address(executor), GROSS);
+        noReturnToken.approve(address(executor), AMOUNT);
         executor.settle(mandate, 0);
-        assertEq(noReturnToken.balanceOf(recipient), GROSS);
+        assertEq(noReturnToken.balanceOf(recipient), AMOUNT);
     }
 
     function test_UnsupportedTokenEconomicsRemainExplicit() public {
@@ -1063,19 +1063,19 @@ contract FixedMandateTest is Test {
         IFixedMandate.Mandate memory feeMandate = _defaultMandate(74);
         feeMandate.token = address(feeToken);
         feeMandate = _openMandate(feeMandate);
-        feeToken.mint(payer, GROSS);
+        feeToken.mint(payer, AMOUNT);
         vm.prank(payer);
-        feeToken.approve(address(executor), GROSS);
+        feeToken.approve(address(executor), AMOUNT);
         executor.settle(feeMandate, 0);
-        assertLt(feeToken.balanceOf(recipient), GROSS, "recipient can receive below nominal");
+        assertLt(feeToken.balanceOf(recipient), AMOUNT, "recipient can receive below nominal");
 
         ExcessiveDebitMockERC20 debitToken = new ExcessiveDebitMockERC20(1e6);
         IFixedMandate.Mandate memory debitMandate = _defaultMandate(75);
         debitMandate.token = address(debitToken);
         debitMandate = _openMandate(debitMandate);
-        debitToken.mint(payer, GROSS + 1e6);
+        debitToken.mint(payer, AMOUNT + 1e6);
         vm.prank(payer);
-        debitToken.approve(address(executor), GROSS);
+        debitToken.approve(address(executor), AMOUNT);
         executor.settle(debitMandate, 0);
         assertEq(debitToken.balanceOf(payer), 0, "payer can be debited above nominal");
     }
@@ -1086,9 +1086,9 @@ contract FixedMandateTest is Test {
         mandate.token = address(reentrantToken);
         mandate.totalPayments = 2;
         mandate = _openMandate(mandate);
-        reentrantToken.mint(payer, 2 * GROSS);
+        reentrantToken.mint(payer, 2 * AMOUNT);
         vm.prank(payer);
-        reentrantToken.approve(address(executor), 2 * GROSS);
+        reentrantToken.approve(address(executor), 2 * AMOUNT);
         vm.warp(START + PERIOD);
 
         bytes memory callbackData = abi.encodeCall(IFixedMandate.settle, (mandate, 1));
@@ -1105,8 +1105,8 @@ contract FixedMandateTest is Test {
         assertTrue(reentrantToken.callbackAttempted(), "callback attempted");
         assertTrue(reentrantToken.callbackSucceeded(), "next unlocked payment settled");
         assertEq(reentrantToken.transferFromCount(), 2, "one transfer per occurrence");
-        assertEq(payerBefore - reentrantToken.balanceOf(payer), 2 * GROSS, "payer debited two full gross payments");
-        assertEq(reentrantToken.balanceOf(recipient), 2 * GROSS, "recipient receives both full gross payments");
+        assertEq(payerBefore - reentrantToken.balanceOf(payer), 2 * AMOUNT, "payer debited two payment amounts");
+        assertEq(reentrantToken.balanceOf(recipient), 2 * AMOUNT, "recipient receives both payment amounts");
         assertEq(reentrantToken.balanceOf(other), 0, "outer submitter receives no funds");
         assertEq(reentrantToken.balanceOf(address(reentrantToken)), 0, "callback submitter receives no funds");
         _assertSettlementLogOrder(logs, executor.mandateId(mandate));
@@ -1121,9 +1121,9 @@ contract FixedMandateTest is Test {
         mandate.token = address(reentrantToken);
         mandate.totalPayments = 2;
         mandate = _openMandate(mandate);
-        reentrantToken.mint(payer, 2 * GROSS);
+        reentrantToken.mint(payer, 2 * AMOUNT);
         vm.prank(payer);
-        reentrantToken.approve(address(executor), 2 * GROSS);
+        reentrantToken.approve(address(executor), 2 * AMOUNT);
         vm.warp(START + PERIOD);
 
         bytes memory callbackData = abi.encodeCall(IFixedMandate.settle, (mandate, 0));
@@ -1140,7 +1140,7 @@ contract FixedMandateTest is Test {
             IFixedMandate.UnexpectedPaymentIndex.selector,
             "current index is stale during callback"
         );
-        assertEq(reentrantToken.balanceOf(recipient), GROSS, "only outer occurrence paid");
+        assertEq(reentrantToken.balanceOf(recipient), AMOUNT, "only outer occurrence paid");
 
         executor.settle(mandate, 1);
         (,,, settledPaymentCount) = executor.mandateStates(executor.mandateId(mandate));
@@ -1153,9 +1153,9 @@ contract FixedMandateTest is Test {
         mandate.token = address(reentrantToken);
         mandate.totalPayments = 2;
         mandate = _openMandate(mandate);
-        reentrantToken.mint(payer, 2 * GROSS);
+        reentrantToken.mint(payer, 2 * AMOUNT);
         vm.prank(payer);
-        reentrantToken.approve(address(executor), 2 * GROSS);
+        reentrantToken.approve(address(executor), 2 * AMOUNT);
         vm.warp(START + PERIOD);
 
         IFixedMandate.Mandate memory redirected = _defaultMandate(93);
@@ -1174,7 +1174,7 @@ contract FixedMandateTest is Test {
         assertEq(redirectedCount, 0, "redirected mandate state unchanged");
         assertFalse(reentrantToken.callbackSucceeded(), "redirected callback rejected");
         assertEq(bytes4(reentrantToken.callbackReturnData()), IFixedMandate.MandateNotOpen.selector);
-        assertEq(reentrantToken.balanceOf(recipient), GROSS, "pinned recipient paid");
+        assertEq(reentrantToken.balanceOf(recipient), AMOUNT, "pinned recipient paid");
         assertEq(reentrantToken.balanceOf(other), 0, "replacement recipient and submitter receive nothing");
     }
 
@@ -1184,9 +1184,9 @@ contract FixedMandateTest is Test {
         mandate.token = address(reentrantToken);
         mandate.totalPayments = 2;
         mandate = _openMandate(mandate);
-        reentrantToken.mint(payer, 2 * GROSS);
+        reentrantToken.mint(payer, 2 * AMOUNT);
         vm.prank(payer);
-        reentrantToken.approve(address(executor), 2 * GROSS);
+        reentrantToken.approve(address(executor), 2 * AMOUNT);
         vm.warp(START + PERIOD);
 
         bytes memory callbackData = abi.encodeCall(IFixedMandate.settle, (mandate, 1));
@@ -1202,7 +1202,7 @@ contract FixedMandateTest is Test {
         // revert atomically discards both PaymentSettled logs together with the state and token effects below.
         (,,, uint256 settledPaymentCount) = executor.mandateStates(id);
         assertEq(settledPaymentCount, 0, "outer failure rolls back both counts");
-        assertEq(reentrantToken.balanceOf(payer), 2 * GROSS, "payer debit rolled back");
+        assertEq(reentrantToken.balanceOf(payer), 2 * AMOUNT, "payer debit rolled back");
         assertEq(reentrantToken.balanceOf(recipient), 0, "recipient credits rolled back");
         assertEq(reentrantToken.balanceOf(other), 0, "outer submitter receives nothing");
         assertEq(reentrantToken.balanceOf(address(reentrantToken)), 0, "callback submitter receives nothing");
@@ -1245,19 +1245,19 @@ contract FixedMandateTest is Test {
         assertEq(edgeExecutor.unlockedPaymentCount(mandate), type(uint256).max);
     }
 
-    function testFuzz_PermissionlessSettlementTransfersFullGross(uint96 rawGross) public {
-        uint256 gross = bound(uint256(rawGross), 1, type(uint96).max);
+    function testFuzz_PermissionlessSettlementTransfersFullAmount(uint96 rawAmount) public {
+        uint256 amount = bound(uint256(rawAmount), 1, type(uint96).max);
         IFixedMandate.Mandate memory mandate = _defaultMandate(81);
-        mandate.payerGrossPerPayment = gross;
+        mandate.amountPerPayment = amount;
         mandate = _openMandate(mandate);
-        token.mint(payer, gross);
+        token.mint(payer, amount);
 
         uint256 payerBefore = token.balanceOf(payer);
         uint256 submitterBefore = token.balanceOf(other);
         vm.prank(other);
         executor.settle(mandate, 0);
-        assertEq(payerBefore - token.balanceOf(payer), gross, "payer gross");
-        assertEq(token.balanceOf(recipient), gross, "recipient gross");
+        assertEq(payerBefore - token.balanceOf(payer), amount, "payer debit");
+        assertEq(token.balanceOf(recipient), amount, "recipient credit");
         assertEq(token.balanceOf(other), submitterBefore, "submitter receives no funds");
     }
 
@@ -1283,7 +1283,7 @@ contract FixedMandateTest is Test {
             biller: biller,
             recipient: recipient,
             token: address(token),
-            payerGrossPerPayment: GROSS,
+            amountPerPayment: AMOUNT,
             periodLength: PERIOD,
             totalPayments: 12,
             termsHash: TERMS_HASH,
@@ -1374,13 +1374,13 @@ contract FixedMandateTest is Test {
         return keccak256(
             abi.encode(
                 keccak256(
-                    "Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+                    "Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
                 ),
                 mandate.payer,
                 mandate.biller,
                 mandate.recipient,
                 mandate.token,
-                mandate.payerGrossPerPayment,
+                mandate.amountPerPayment,
                 mandate.periodLength,
                 mandate.totalPayments,
                 mandate.termsHash,

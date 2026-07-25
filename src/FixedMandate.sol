@@ -14,14 +14,14 @@ import {UnorderedNonces} from "./UnorderedNonces.sol";
 contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
     using SafeERC20 for IERC20;
 
-    // "Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
-    bytes32 private constant _MANDATE_TYPEHASH = 0x18add0b5f00bbaad860472e7219507efb46c1084f6a8ab757ceda221580760bf;
-    // "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+    // "Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+    bytes32 private constant _MANDATE_TYPEHASH = 0x2cb7e3a6ce71ea54f5b22fa6a91ad500901576ca2e0bb109f23a0000ed803418;
+    // "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
     bytes32 private constant _MANDATE_AUTHORIZATION_TYPEHASH =
-        0x1a438fc38a73c4c8b9376257eefd742fc92ac50d5c909c81a143645d1809cb1a;
-    // "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 payerGrossPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+        0xf9d6fb0adbc3b16b07a472bbfadd3bebbd4c55774935ad15d79ec25e3b656fc2;
+    // "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
     bytes32 private constant _MANDATE_ACCEPTANCE_TYPEHASH =
-        0x11d52a36ac858fa40741f69247304faa44104222685420bfed13702c9d1ebf29;
+        0xe2b64c471e9c56916489f2a1e58382e9d165717620a0a17467ade21ee66f3752;
     // "Cancellation(bytes32 mandateId,address authorizer,uint256 nonce,uint256 signatureDeadline)"
     bytes32 private constant _CANCELLATION_TYPEHASH =
         0x11c57bb6a54f0e3ab0eada428058c7254168138845c71115231bfba8bbf010c8;
@@ -76,7 +76,7 @@ contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
     function _validateMandate(Mandate calldata mandate) internal pure {
         if (
             mandate.payer == address(0) || mandate.biller == address(0) || mandate.recipient == address(0)
-                || mandate.token == address(0) || mandate.payerGrossPerPayment == 0 || mandate.periodLength == 0
+                || mandate.token == address(0) || mandate.amountPerPayment == 0 || mandate.periodLength == 0
                 || mandate.termsHash == bytes32(0)
         ) revert InvalidMandate();
     }
@@ -101,7 +101,7 @@ contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
             mandate.biller,
             mandate.token,
             mandate.recipient,
-            mandate.payerGrossPerPayment,
+            mandate.amountPerPayment,
             mandate.periodLength,
             mandate.totalPayments,
             startedAt,
@@ -132,11 +132,11 @@ contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
             mandate.biller,
             mandate.recipient,
             mandate.token,
-            mandate.payerGrossPerPayment,
+            mandate.amountPerPayment,
             msg.sender
         );
 
-        IERC20(mandate.token).safeTransferFrom(mandate.payer, mandate.recipient, mandate.payerGrossPerPayment);
+        IERC20(mandate.token).safeTransferFrom(mandate.payer, mandate.recipient, mandate.amountPerPayment);
     }
 
     /// @inheritdoc IFixedMandate
@@ -288,7 +288,7 @@ contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
                 mandate.biller,
                 mandate.recipient,
                 mandate.token,
-                mandate.payerGrossPerPayment,
+                mandate.amountPerPayment,
                 mandate.periodLength,
                 mandate.totalPayments,
                 mandate.termsHash,
