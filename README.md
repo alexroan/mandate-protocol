@@ -149,7 +149,7 @@ display currently unlocked arrears, and make cancellation and allowance revocati
 the mandate but does not revoke the underlying token allowance.
 
 The full trust model, token assumptions, reentrancy behavior, ordering considerations, and known implementation limits
-are documented in [PROTOCOL.md](./PROTOCOL.md#trust-andå-security-model).
+are documented in [PROTOCOL.md](./PROTOCOL.md#trust-and-security-model).
 
 Security reports should not be opened as public issues. Contact the repository maintainers privately before disclosing
 a vulnerability.
