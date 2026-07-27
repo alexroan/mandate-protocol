@@ -64,12 +64,12 @@ automation service to recover arrears without changing the original agreement.
 
 ## Current Implementation
 
-This repository contains `FixedMandate`, the first Mandate reference implementation. It supports exact fixed-amount
+This repository contains `FixedMandate`, the first in-development Mandate contract. It supports exact fixed-amount
 payments at fixed-duration intervals over an existing ERC-20 allowance.
 
 > [!WARNING]
-> This is a prototype/reference implementation. It has not received an external security audit and should not be used
-> in production or deployed with meaningful funds.
+> This implementation is under active development. It has not received an external security audit and should not be
+> used in production or deployed with meaningful funds.
 
 The current implementation includes:
 
@@ -149,7 +149,7 @@ display currently unlocked arrears, and make cancellation and allowance revocati
 the mandate but does not revoke the underlying token allowance.
 
 The full trust model, token assumptions, reentrancy behavior, ordering considerations, and known implementation limits
-are documented in [PROTOCOL.md](./PROTOCOL.md#trust-andå-security-model).
+are documented in [PROTOCOL.md](./PROTOCOL.md#trust-and-security-model).
 
 Security reports should not be opened as public issues. Contact the repository maintainers privately before disclosing
 a vulnerability.
