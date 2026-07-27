@@ -142,29 +142,6 @@ an intentional change affects gas usage.
 
 The contract is pinned to Solidity `0.8.35`. CI and the committed gas baselines use Foundry `v1.5.1`.
 
-## Deploy
-
-Create `.env` from `.env.example`, then run:
-
-```bash
-source .env
-forge script script/DeployFixedMandate.s.sol:DeployFixedMandate \
-  --rpc-url "$RPC_URL" \
-  --private-key "$PRIVATE_KEY" \
-  --broadcast
-```
-
-Add verifier flags when the target chain has a configured verifier:
-
-```bash
-forge script script/DeployFixedMandate.s.sol:DeployFixedMandate \
-  --rpc-url "$RPC_URL" \
-  --private-key "$PRIVATE_KEY" \
-  --broadcast \
-  --verify \
-  --etherscan-api-key "$ETHERSCAN_API_KEY"
-```
-
 ## Security
 
 `FixedMandate` is a shared ERC-20 spender. Integrations should use well-understood tokens, size allowances deliberately,
@@ -172,7 +149,7 @@ display currently unlocked arrears, and make cancellation and allowance revocati
 the mandate but does not revoke the underlying token allowance.
 
 The full trust model, token assumptions, reentrancy behavior, ordering considerations, and known implementation limits
-are documented in [PROTOCOL.md](./PROTOCOL.md#trust-and-security-model).
+are documented in [PROTOCOL.md](./PROTOCOL.md#trust-andå-security-model).
 
 Security reports should not be opened as public issues. Contact the repository maintainers privately before disclosing
 a vulnerability.
