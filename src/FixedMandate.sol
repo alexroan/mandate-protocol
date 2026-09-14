@@ -210,6 +210,7 @@ contract FixedMandate is IFixedMandate, EIP712, UnorderedNonces, Signatures {
         bytes32 digest = hashCancellation(id, authorizer, cancelNonce, signatureDeadline);
         if (!_isValidSignatureNow(authorizer, digest, signature)) revert InvalidSignature();
         cancellationNonceUsed[authorizer][cancelNonce] = true;
+        emit CancellationNonceConsumed(authorizer, cancelNonce);
         _cancel(id, mandate.payer, authorizer);
     }
 

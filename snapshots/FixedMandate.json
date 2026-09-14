@@ -1,9 +1,9 @@
 {
-  "cancelMandate.biller.signature.compact": "64231",
-  "cancelMandate.biller.signature.eoa": "64524",
-  "cancelMandate.biller.signature.erc1271": "67464",
+  "cancelMandate.biller.signature.compact": "65742",
+  "cancelMandate.biller.signature.eoa": "66023",
+  "cancelMandate.biller.signature.erc1271": "68975",
   "cancelMandate.payer.direct": "32497",
-  "cancelMandate.payer.signature.eoa": "64311",
+  "cancelMandate.payer.signature.eoa": "65822",
   "cancelMandateAsBiller.biller.direct": "32299",
   "cancelMandateAsBiller.wallet.endToEnd": "63139",
   "invalidateUnorderedNonces.nonzero.cold": "45584",

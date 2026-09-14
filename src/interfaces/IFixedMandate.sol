@@ -121,6 +121,11 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
     /// @param cancelledBy Party that directly called or signed the cancellation.
     event MandateCancellation(bytes32 indexed mandateId, address indexed payer, address indexed cancelledBy);
 
+    /// @notice Emitted when a successful signed cancellation consumes an authorizer's nonce.
+    /// @param authorizer Payer or biller whose cancellation signature was verified.
+    /// @param cancelNonce Cancellation nonce consumed in the authorizer's namespace.
+    event CancellationNonceConsumed(address indexed authorizer, uint256 indexed cancelNonce);
+
     /// @notice Opens a fixed mandate using payer authorization and biller acceptance.
     /// @dev Any caller may submit. Successful opening records `block.timestamp` as the schedule start.
     /// @param mandate Full fixed terms authorized by payer and accepted by biller.

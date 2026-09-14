@@ -41,6 +41,8 @@ contract FixedMandateTest is Test {
         0x1a59d7c424c7fbdd31c69bc31da5998120dbc69c9c4aecb3147453276e44ba5c;
     bytes32 internal constant MANDATE_CANCELLATION_TOPIC =
         0x328bb2c80907ff47c3ec6cf730d8843d943244db438a643c4d9f64c93e1cccb2;
+    bytes32 internal constant CANCELLATION_NONCE_CONSUMED_TOPIC =
+        keccak256("CancellationNonceConsumed(address,uint256)");
     bytes32 internal constant UNORDERED_NONCE_INVALIDATION_TOPIC =
         0xedd29604ecd2dbbcc47e637acf5f19ac68811dceb17fcbfbc647c253e0751cff;
 
@@ -852,9 +854,11 @@ contract FixedMandateTest is Test {
         bytes32 billerId = executor.mandateId(billerCancelled);
         vm.expectEmit(true, true, true, true, address(executor));
         emit IFixedMandate.MandateCancellation(billerId, payer, biller);
+        vm.recordLogs();
         vm.prank(biller);
         executor.cancelMandateAsBiller(billerCancelled);
         vm.snapshotGasLastCall("FixedMandate", "cancelMandateAsBiller.biller.direct");
+        _assertSingleExecutorLogTopic(vm.getRecordedLogs(), MANDATE_CANCELLATION_TOPIC);
         vm.expectRevert(IFixedMandate.MandateCancelled.selector);
         executor.settle(billerCancelled, 0);
         assertFalse(
@@ -877,30 +881,40 @@ contract FixedMandateTest is Test {
         IFixedMandate.Mandate memory payerMandate = _openMandate(_defaultMandate(53));
         bytes32 payerId = executor.mandateId(payerMandate);
         uint256 deadline = START + 1 hours;
-        uint256 cancelNonce = payerMandate.nonce;
+        uint256 cancelNonce = 7;
+        bytes memory payerSignature = _signCancel(payerPk, payerId, payer, cancelNonce, deadline);
         vm.expectEmit(true, true, true, true, address(executor));
         emit IFixedMandate.MandateCancellation(payerId, payer, payer);
+        vm.recordLogs();
         vm.prank(other);
-        executor.cancelMandateWithPayerSignature(
-            payerMandate, cancelNonce, deadline, _signCancel(payerPk, payerId, payer, cancelNonce, deadline)
-        );
+        executor.cancelMandateWithPayerSignature(payerMandate, cancelNonce, deadline, payerSignature);
         vm.snapshotGasLastCall("FixedMandate", "cancelMandate.payer.signature.eoa");
+        _assertSignedCancellationLogs(vm.getRecordedLogs(), payerId, payer, payer, cancelNonce);
         assertTrue(executor.cancellationNonceUsed(payer, cancelNonce), "payer cancellation nonce used");
         assertFalse(executor.cancellationNonceUsed(biller, cancelNonce), "biller nonce separate");
         bytes memory replayedPayerSignature = _signCancel(payerPk, payerId, payer, cancelNonce, deadline);
+        vm.recordLogs();
         vm.expectRevert(IFixedMandate.InvalidCancellationNonce.selector);
         executor.cancelMandateWithPayerSignature(payerMandate, cancelNonce, deadline, replayedPayerSignature);
+        assertEq(vm.getRecordedLogs().length, 0, "payer replay emits no events");
+        assertTrue(executor.cancellationNonceUsed(payer, cancelNonce), "payer replay preserves consumed nonce");
 
         IFixedMandate.Mandate memory billerMandate = _openMandate(_defaultMandate(54));
         bytes32 billerId = executor.mandateId(billerMandate);
+        bytes memory billerSignature = _signCancel(billerPk, billerId, biller, cancelNonce, deadline);
         vm.expectEmit(true, true, true, true, address(executor));
         emit IFixedMandate.MandateCancellation(billerId, payer, biller);
+        vm.recordLogs();
         vm.prank(other);
-        executor.cancelMandateWithBillerSignature(
-            billerMandate, cancelNonce, deadline, _signCancel(billerPk, billerId, biller, cancelNonce, deadline)
-        );
+        executor.cancelMandateWithBillerSignature(billerMandate, cancelNonce, deadline, billerSignature);
         vm.snapshotGasLastCall("FixedMandate", "cancelMandate.biller.signature.eoa");
+        _assertSignedCancellationLogs(vm.getRecordedLogs(), billerId, payer, biller, cancelNonce);
         assertTrue(executor.cancellationNonceUsed(biller, cancelNonce), "biller cancellation nonce used");
+        vm.recordLogs();
+        vm.expectRevert(IFixedMandate.InvalidCancellationNonce.selector);
+        executor.cancelMandateWithBillerSignature(billerMandate, cancelNonce, deadline, billerSignature);
+        assertEq(vm.getRecordedLogs().length, 0, "biller replay emits no events");
+        assertTrue(executor.cancellationNonceUsed(biller, cancelNonce), "biller replay preserves consumed nonce");
     }
 
     function test_AttackerCannotCancelBySubstitutingThemselfAsMandateParty() public {
@@ -930,7 +944,9 @@ contract FixedMandateTest is Test {
         );
         bytes32 payerRouteId = executor.mandateId(payerRoute);
         bytes memory payerSignature = _signCancel(payerPk, payerRouteId, payer, 10, deadline);
+        vm.recordLogs();
         executor.cancelMandateWithPayerSignature(payerRoute, 10, deadline, payerSignature);
+        _assertSignedCancellationLogs(vm.getRecordedLogs(), payerRouteId, payer, payer, 10);
 
         IFixedMandate.Mandate memory billerRoute = _defaultMandate(66);
         billerRoute.biller = payer;
@@ -943,8 +959,10 @@ contract FixedMandateTest is Test {
         );
         bytes32 billerRouteId = executor.mandateId(billerRoute);
         bytes memory billerSignature = _signCancel(payerPk, billerRouteId, payer, 10, deadline);
+        vm.recordLogs();
         vm.expectRevert(IFixedMandate.InvalidCancellationNonce.selector);
         executor.cancelMandateWithBillerSignature(billerRoute, 10, deadline, billerSignature);
+        assertEq(vm.getRecordedLogs().length, 0, "shared nonce replay emits nothing");
     }
 
     function test_RevertWhen_CancellationSignatureUsesWrongOrUnrelatedParty() public {
@@ -1049,10 +1067,12 @@ contract FixedMandateTest is Test {
         bytes32 id = executor.mandateId(mandate);
         uint256 deadline = START + 1 hours;
         vm.warp(deadline);
-        executor.cancelMandateWithBillerSignature(
-            mandate, 8, deadline, _compact(_signCancel(billerPk, id, biller, 8, deadline))
-        );
+        bytes memory signature = _compact(_signCancel(billerPk, id, biller, 8, deadline));
+        vm.recordLogs();
+        vm.prank(other);
+        executor.cancelMandateWithBillerSignature(mandate, 8, deadline, signature);
         vm.snapshotGasLastCall("FixedMandate", "cancelMandate.biller.signature.compact");
+        _assertSignedCancellationLogs(vm.getRecordedLogs(), id, payer, biller, 8);
         (, bool cancelled,,) = executor.mandateStates(id);
         assertTrue(cancelled);
     }
@@ -1089,6 +1109,60 @@ contract FixedMandateTest is Test {
         (, bool cancelled,,) = executor.mandateStates(id);
         assertTrue(cancelled, "ERC-1271 biller cancelled mandate");
         assertTrue(executor.cancellationNonceUsed(address(billerWallet), 9), "ERC-1271 cancellation nonce used");
+    }
+
+    function test_CancellationNonceEventsIncludeZeroAndUintMaxForBothRoles() public {
+        _assertCancellationNonceEvent(false, 100, 0, 0);
+        _assertCancellationNonceEvent(false, 101, type(uint256).max, 0);
+        _assertCancellationNonceEvent(true, 102, 0, 0);
+        _assertCancellationNonceEvent(true, 103, type(uint256).max, 0);
+    }
+
+    function test_CancellationNonceEventsRemainIndependentOfOpeningNonces() public {
+        _assertCancellationNonceEvent(false, 104, 104, 0);
+        _assertCancellationNonceEvent(true, 105, 105, 0);
+    }
+
+    function test_ERC1271CancellationNonceEventsIdentifyWalletNotOwnerOrRelayer() public {
+        uint256 ownerPk = 0x5151;
+        address owner = vm.addr(ownerPk);
+        address payerWallet = address(new MockERC1271Wallet(owner));
+        address billerWallet = address(new MockERC1271Wallet(owner));
+        uint256 deadline = START + 1 hours;
+        uint256 cancelNonce = 7;
+
+        for (uint256 i; i < 2; ++i) {
+            IFixedMandate.Mandate memory mandate = _defaultMandate(100 + i);
+            mandate.payer = payerWallet;
+            mandate.biller = billerWallet;
+            executor.openMandate(
+                mandate,
+                deadline,
+                deadline,
+                _signAuthorization(ownerPk, mandate, deadline),
+                _signAcceptance(ownerPk, mandate, deadline)
+            );
+            bytes32 id = executor.mandateId(mandate);
+            bool asBiller = i == 1;
+            address authorizer = asBiller ? billerWallet : payerWallet;
+            bytes memory signature = _signCancel(ownerPk, id, authorizer, cancelNonce, deadline);
+
+            vm.recordLogs();
+            vm.prank(other);
+            _cancelWithSignature(mandate, asBiller, cancelNonce, deadline, signature);
+            _assertSignedCancellationLogs(vm.getRecordedLogs(), id, payerWallet, authorizer, cancelNonce);
+            assertTrue(executor.cancellationNonceUsed(authorizer, cancelNonce), "wallet nonce consumed");
+            assertFalse(executor.cancellationNonceUsed(owner, cancelNonce), "owner nonce untouched");
+            assertFalse(executor.cancellationNonceUsed(other, cancelNonce), "relayer nonce untouched");
+        }
+    }
+
+    function test_FailedPayerSignatureCancellationsDoNotConsumeNonce() public {
+        _assertFailedSignedCancellations(false);
+    }
+
+    function test_FailedBillerSignatureCancellationsDoNotConsumeNonce() public {
+        _assertFailedSignedCancellations(true);
     }
 
     // Transfer failures and reentrancy
@@ -1307,6 +1381,14 @@ contract FixedMandateTest is Test {
 
     // Fuzz coverage
 
+    function testFuzz_PayerCancellationEmitsConsumedNonce(uint256 cancelNonce, uint8 signatureFormat) public {
+        _assertCancellationNonceEvent(false, 100, cancelNonce, signatureFormat % 3);
+    }
+
+    function testFuzz_BillerCancellationEmitsConsumedNonce(uint256 cancelNonce, uint8 signatureFormat) public {
+        _assertCancellationNonceEvent(true, 100, cancelNonce, signatureFormat % 3);
+    }
+
     function testFuzz_OpeningStoresSupportedChainTimestamp(uint64 rawTimestamp) public {
         uint256 timestamp = uint256(rawTimestamp);
         vm.warp(timestamp);
@@ -1522,6 +1604,117 @@ contract FixedMandateTest is Test {
             ++matchingLogs;
         }
         assertEq(matchingLogs, 1, "exactly one executor event");
+    }
+
+    function _assertSignedCancellationLogs(
+        Vm.Log[] memory logs,
+        bytes32 id,
+        address expectedPayer,
+        address authorizer,
+        uint256 cancelNonce
+    ) internal view {
+        assertEq(logs.length, 2, "exactly one nonce event and one cancellation event");
+        assertEq(logs[0].emitter, address(executor), "nonce event emitter");
+        assertEq(logs[0].topics.length, 3, "indexed authorizer and cancellation nonce");
+        assertEq(logs[0].topics[0], CANCELLATION_NONCE_CONSUMED_TOPIC, "nonce event precedes cancellation");
+        assertEq(logs[0].topics[1], bytes32(uint256(uint160(authorizer))), "nonce event authorizer");
+        assertEq(logs[0].topics[2], bytes32(cancelNonce), "nonce event cancellation nonce");
+        assertEq(logs[0].data.length, 0, "nonce event has no unindexed fields");
+
+        assertEq(logs[1].emitter, address(executor), "cancellation event emitter");
+        assertEq(logs[1].topics.length, 4, "existing cancellation event indexing unchanged");
+        assertEq(logs[1].topics[0], MANDATE_CANCELLATION_TOPIC, "existing cancellation event topic unchanged");
+        assertEq(logs[1].topics[1], id, "cancellation event mandate id");
+        assertEq(logs[1].topics[2], bytes32(uint256(uint160(expectedPayer))), "cancellation event payer");
+        assertEq(logs[1].topics[3], bytes32(uint256(uint160(authorizer))), "cancellation event authorizer");
+        assertEq(logs[1].data.length, 0, "existing cancellation event data unchanged");
+    }
+
+    function _assertCancellationNonceEvent(bool asBiller, uint256 openingNonce, uint256 cancelNonce, uint8 format)
+        internal
+    {
+        IFixedMandate.Mandate memory mandate = _openMandate(_defaultMandate(openingNonce));
+        bytes32 id = executor.mandateId(mandate);
+        address authorizer = asBiller ? biller : payer;
+        uint256 deadline = START + 1 hours;
+        bytes memory signature = _signCancel(asBiller ? billerPk : payerPk, id, authorizer, cancelNonce, deadline);
+        if (format == 1) signature = _compact(signature);
+        if (format == 2) signature = _zeroOneV(signature);
+
+        vm.recordLogs();
+        vm.prank(other);
+        _cancelWithSignature(mandate, asBiller, cancelNonce, deadline, signature);
+        _assertSignedCancellationLogs(vm.getRecordedLogs(), id, payer, authorizer, cancelNonce);
+        assertTrue(executor.cancellationNonceUsed(authorizer, cancelNonce), "emitted nonce consumed");
+        assertFalse(executor.cancellationNonceUsed(other, cancelNonce), "relayer nonce untouched");
+        (, bool cancelled,,) = executor.mandateStates(id);
+        assertTrue(cancelled, "mandate cancelled");
+    }
+
+    function _assertFailedSignedCancellations(bool asBiller) internal {
+        IFixedMandate.Mandate memory mandate = _defaultMandate(100);
+        bytes32 id = executor.mandateId(mandate);
+        address authorizer = asBiller ? biller : payer;
+        uint256 deadline = START + 1 hours;
+        uint256 cancelNonce = 7;
+
+        vm.warp(deadline + 1);
+        vm.recordLogs();
+        vm.expectRevert(IFixedMandate.SignatureExpired.selector);
+        _cancelWithSignature(mandate, asBiller, cancelNonce, deadline, hex"");
+        assertEq(vm.getRecordedLogs().length, 0, "expired signature emits nothing");
+        assertFalse(executor.cancellationNonceUsed(authorizer, cancelNonce), "expired signature preserves nonce");
+
+        vm.warp(deadline);
+        {
+            bytes memory wrongSignature = _signCancel(otherPk, id, authorizer, cancelNonce, deadline);
+            vm.recordLogs();
+            vm.expectRevert(IFixedMandate.InvalidSignature.selector);
+            _cancelWithSignature(mandate, asBiller, cancelNonce, deadline, wrongSignature);
+            assertEq(vm.getRecordedLogs().length, 0, "unauthorized signature emits nothing");
+            assertFalse(
+                executor.cancellationNonceUsed(authorizer, cancelNonce), "unauthorized signature preserves nonce"
+            );
+        }
+
+        vm.recordLogs();
+        vm.expectRevert(IFixedMandate.InvalidSignature.selector);
+        _cancelWithSignature(mandate, asBiller, cancelNonce, deadline, hex"1234");
+        assertEq(vm.getRecordedLogs().length, 0, "malformed signature emits nothing");
+        assertFalse(executor.cancellationNonceUsed(authorizer, cancelNonce), "malformed signature preserves nonce");
+
+        // These failures occur after the nonce write and emit. The enclosing revert discards both.
+        bytes memory signature = _signCancel(asBiller ? billerPk : payerPk, id, authorizer, cancelNonce, deadline);
+        vm.expectRevert(IFixedMandate.MandateNotOpen.selector);
+        _cancelWithSignature(mandate, asBiller, cancelNonce, deadline, signature);
+        assertFalse(executor.cancellationNonceUsed(authorizer, cancelNonce), "unopened mandate rolls nonce back");
+        (bool opened, bool cancelled,,) = executor.mandateStates(id);
+        assertFalse(opened, "failed cancellation does not open mandate");
+        assertFalse(cancelled, "failed cancellation does not cancel mandate");
+
+        _openMandate(mandate);
+        vm.prank(payer);
+        executor.cancelMandateAsPayer(mandate);
+        vm.expectRevert(IFixedMandate.MandateCancelled.selector);
+        _cancelWithSignature(mandate, asBiller, cancelNonce, deadline, signature);
+        assertFalse(executor.cancellationNonceUsed(authorizer, cancelNonce), "cancelled mandate rolls nonce back");
+
+        // The rolled-back nonce remains usable and observable on another mandate.
+        _assertCancellationNonceEvent(asBiller, 101, cancelNonce, 0);
+    }
+
+    function _cancelWithSignature(
+        IFixedMandate.Mandate memory mandate,
+        bool asBiller,
+        uint256 cancelNonce,
+        uint256 deadline,
+        bytes memory signature
+    ) internal {
+        if (asBiller) {
+            executor.cancelMandateWithBillerSignature(mandate, cancelNonce, deadline, signature);
+        } else {
+            executor.cancelMandateWithPayerSignature(mandate, cancelNonce, deadline, signature);
+        }
     }
 
     function _signAuthorization(uint256 privateKey, IFixedMandate.Mandate memory mandate, uint256 deadline)

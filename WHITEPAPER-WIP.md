@@ -314,7 +314,8 @@ Signed cancellation binds the mandate ID, authorizer address, cancellation nonce
 authorization from being attributed to the other, including when two ERC-1271 wallets share an owner or validator.
 
 Cancellation nonce state is scoped by authorizer. If payer and biller are the same address they necessarily share that
-address's nonce namespace. Direct cancellation does not consume a signed-cancellation nonce.
+address's nonce namespace. Cancellation nonces may be any `uint256` value, including zero and `type(uint256).max`.
+Direct cancellation does not consume a signed-cancellation nonce.
 
 Cancellation applies only to an already opened mandate. It blocks every accrued unpaid occurrence and every future
 unlock. It does not reverse completed transfers or reduce ERC-20 allowance.
@@ -655,14 +656,20 @@ Indexers must handle chain reorganizations before treating records as operationa
 
 ## 17. Observable protocol surface
 
-The reference implementation exposes four lifecycle records:
+`FixedMandate` exposes five lifecycle and nonce records:
 
 | Record | Purpose |
 |---|---|
 | `MandateOpened` | Identifies the nine-field opened schedule and its generated start |
 | `PaymentSettled` | Identifies one consumed zero-based payment index, full nominal amount, and immediate submitter |
 | `MandateCancellation` | Identifies the mandate and payer or biller that directly called or signed cancellation |
+| `CancellationNonceConsumed` | Identifies the indexed `authorizer` and `cancelNonce` consumed by signed cancellation |
 | `UnorderedNonceInvalidation` | Records a mask ORed into the payer's opening nonce bitmap, including possible no-op bits |
+
+Successful signed cancellation emits `CancellationNonceConsumed` immediately after marking the authorizer's nonce as
+used, then emits the unchanged `MandateCancellation` lifecycle event. Direct payer or biller cancellation consumes no
+cancellation nonce and emits only `MandateCancellation`. Failed cancellation rolls back all state changes and logs,
+including any nonce consumption and its event.
 
 The settlement event is emitted after count consumption but before token calls. It is durable only if the complete
 transaction succeeds. This ordering ensures that a successful nested settlement event follows its outer lower index.
@@ -828,7 +835,9 @@ Required cancellation properties include:
 - signature deadline, mandate ID, signature domain, and authorizer nonce are bound;
 - unrelated signers and mandate-party substitution cannot cancel;
 - when payer and biller are distinct addresses, one role's authorization cannot be replayed through the other role;
-- failed cancellation does not consume its nonce;
+- signed cancellation emits nonce consumption before the unchanged lifecycle event;
+- direct cancellation consumes no cancellation nonce and emits only the lifecycle event;
+- failed cancellation leaves neither nonce consumption nor cancellation logs;
 - cancellation stops accrued and future occurrences; and
 - settlement-versus-cancellation ordering matches chain transaction order.
 

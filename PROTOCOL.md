@@ -375,21 +375,27 @@ sequenceDiagram
         E->>E: Check deadline and payer cancellation nonce
         E->>E: Verify payer signature
         E->>E: Consume payer cancellation nonce
+        E-->>I: Emit CancellationNonceConsumed(payer, cancelNonce)
     else Biller signature cancellation
         B-->>C: Sign authorizer-bound Cancellation
         C->>E: cancelMandateWithBillerSignature
         E->>E: Check deadline and biller cancellation nonce
         E->>E: Verify biller signature
         E->>E: Consume biller cancellation nonce
+        E-->>I: Emit CancellationNonceConsumed(biller, cancelNonce)
     end
     E->>E: Require opened and not already cancelled
     E->>E: Store cancelled=true
     E-->>I: Emit MandateCancellation
 ```
 
-If signed cancellation later fails because the mandate is unopened or already cancelled, the nonce update rolls back
-with the transaction. Only the payer or biller can authorize cancellation; permissionless settlement submission grants
-no cancellation authority. Cancellation blocks both unlocked arrears and future occurrences, but it does not revoke
+Direct cancellation consumes no cancellation nonce and emits only `MandateCancellation`. Successful signed cancellation
+emits `CancellationNonceConsumed` immediately after the nonce update, followed by the unchanged `MandateCancellation`.
+If cancellation fails, all state changes and logs roll back, including the nonce update and its event when a signed
+cancellation reaches an unopened or already cancelled mandate.
+
+Only the payer or biller can authorize cancellation; permissionless settlement submission grants no cancellation
+authority. Cancellation blocks both unlocked arrears and future occurrences, but it does not revoke
 ERC-20 allowance. Allowance revocation at the token is the broad emergency brake for all pulls from that payer for that
 token through this `FixedMandate` deployment.
 
@@ -471,8 +477,9 @@ Signed cancellation uses a separate mapping:
 cancellationNonceUsed[authorizer][cancelNonce]
 ```
 
-Cancellation nonces are arbitrary values, not a required sequence. Payer and biller have independent namespaces when
-they are different addresses, so both may use the same numeric cancellation nonce. If both roles are the same address,
+Cancellation nonces are arbitrary `uint256` values, including zero and `type(uint256).max`, not a required sequence.
+Payer and biller have independent namespaces when they are different addresses, so both may use the same numeric
+cancellation nonce. If both roles are the same address,
 they intentionally share authorizer identity and one cancellation namespace. Opening and cancellation storage are
 separate, so the same numeric value can independently be used as an opening nonce and a cancellation nonce.
 
@@ -507,6 +514,8 @@ event PaymentSettled(
 );
 
 event MandateCancellation(bytes32 indexed mandateId, address indexed payer, address indexed cancelledBy);
+
+event CancellationNonceConsumed(address indexed authorizer, uint256 indexed cancelNonce);
 ```
 
 | Event | Indexed fields | Meaning |
@@ -514,6 +523,7 @@ event MandateCancellation(bytes32 indexed mandateId, address indexed payer, addr
 | `MandateOpened` | `mandateId`, `payer`, `biller` | A mandate opened. Non-indexed data contains every remaining signed field plus generated `startedAt`. |
 | `PaymentSettled` | `mandateId`, `paymentIndex`, `payer` | One occurrence settled. Data records biller, recipient, token, amount per payment, and immediate submitter. |
 | `MandateCancellation` | `mandateId`, `payer`, `cancelledBy` | Payer or biller authorized cancellation. |
+| `CancellationNonceConsumed` | `authorizer`, `cancelNonce` | Records the authorizer-scoped nonce consumed by signed cancellation, before `MandateCancellation`. |
 | `UnorderedNonceInvalidation` | `owner`, `wordPos` | Records the mask ORed into an owner's bitmap; `mask` is non-indexed and may be a no-op. |
 
 `EIP712DomainChanged` is inherited through `IERC5267`. The contract's domain is immutable, so this implementation never
