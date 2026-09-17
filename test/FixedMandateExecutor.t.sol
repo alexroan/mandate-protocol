@@ -36,7 +36,7 @@ contract FixedMandateTest is Test {
     uint256 internal constant PERIOD = 30 days;
     uint256 internal constant AMOUNT = 100e6;
     bytes32 internal constant TERMS_HASH = keccak256("fixed mandate terms v1");
-    bytes32 internal constant MANDATE_OPENED_TOPIC = 0xad55e3a0d6b405d919cd1a8df033438d18034f6c46362cd15ff991b4a3a7bd36;
+    bytes32 internal constant MANDATE_OPENED_TOPIC = 0x66aff64097eca9160e93ee1c78afff9b60272d6852647db29ee9c4a30d45ee12;
     bytes32 internal constant PAYMENT_SETTLED_TOPIC =
         0x1a59d7c424c7fbdd31c69bc31da5998120dbc69c9c4aecb3147453276e44ba5c;
     bytes32 internal constant MANDATE_CANCELLATION_TOPIC =
@@ -63,6 +63,7 @@ contract FixedMandateTest is Test {
 
     function test_DomainSeparatorAndCanonicalTypedData() public view {
         IFixedMandate.Mandate memory mandate = _defaultMandate(43);
+        mandate.firstPaymentAt = START + 7 days;
         uint256 deadline = START + 1 hours;
         bytes32 domainSeparator = keccak256(
             abi.encode(
@@ -86,7 +87,7 @@ contract FixedMandateTest is Test {
                     abi.encode(
                         keccak256(
                             bytes(
-                                "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+                                "MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 firstPaymentAt,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
                             )
                         ),
                         structHash,
@@ -104,7 +105,7 @@ contract FixedMandateTest is Test {
                     abi.encode(
                         keccak256(
                             bytes(
-                                "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+                                "MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 firstPaymentAt,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
                             )
                         ),
                         structHash,
@@ -143,26 +144,26 @@ contract FixedMandateTest is Test {
     }
 
     function test_BreakingMandateSchemaUsesCanonicalFunctionSelectors() public pure {
-        assertEq(IFixedMandate.openMandate.selector, bytes4(0xb16358f8), "openMandate");
-        assertEq(IFixedMandate.openMandateAsPayer.selector, bytes4(0x9d4c6e63), "openMandateAsPayer");
-        assertEq(IFixedMandate.openMandateAsBiller.selector, bytes4(0xe6b6a2d9), "openMandateAsBiller");
-        assertEq(IFixedMandate.settle.selector, bytes4(0x6ebdc6c5), "settle");
-        assertEq(IFixedMandate.cancelMandateAsPayer.selector, bytes4(0x98b2c5e1), "cancelMandateAsPayer");
-        assertEq(IFixedMandate.cancelMandateAsBiller.selector, bytes4(0x1b450796), "cancelMandateAsBiller");
+        assertEq(IFixedMandate.openMandate.selector, bytes4(0x9ffad9b5), "openMandate");
+        assertEq(IFixedMandate.openMandateAsPayer.selector, bytes4(0x78d94c0a), "openMandateAsPayer");
+        assertEq(IFixedMandate.openMandateAsBiller.selector, bytes4(0x82fb1418), "openMandateAsBiller");
+        assertEq(IFixedMandate.settle.selector, bytes4(0xa7346c38), "settle");
+        assertEq(IFixedMandate.cancelMandateAsPayer.selector, bytes4(0x3824a692), "cancelMandateAsPayer");
+        assertEq(IFixedMandate.cancelMandateAsBiller.selector, bytes4(0xa766eead), "cancelMandateAsBiller");
         assertEq(
             IFixedMandate.cancelMandateWithPayerSignature.selector,
-            bytes4(0x74187f97),
+            bytes4(0x6beebcd3),
             "cancelMandateWithPayerSignature"
         );
         assertEq(
             IFixedMandate.cancelMandateWithBillerSignature.selector,
-            bytes4(0xf0929b08),
+            bytes4(0x3e9d0b07),
             "cancelMandateWithBillerSignature"
         );
-        assertEq(IFixedMandate.mandateId.selector, bytes4(0xa316420a), "mandateId");
-        assertEq(IFixedMandate.hashMandateAuthorization.selector, bytes4(0x0575347b), "hashMandateAuthorization");
-        assertEq(IFixedMandate.hashMandateAcceptance.selector, bytes4(0x138e4cf3), "hashMandateAcceptance");
-        assertEq(IFixedMandate.unlockedPaymentCount.selector, bytes4(0xec3fd153), "unlockedPaymentCount");
+        assertEq(IFixedMandate.mandateId.selector, bytes4(0x8da752bd), "mandateId");
+        assertEq(IFixedMandate.hashMandateAuthorization.selector, bytes4(0x04613c1d), "hashMandateAuthorization");
+        assertEq(IFixedMandate.hashMandateAcceptance.selector, bytes4(0x29c9d823), "hashMandateAcceptance");
+        assertEq(IFixedMandate.unlockedPaymentCount.selector, bytes4(0x55f8e5d4), "unlockedPaymentCount");
         assertEq(IFixedMandate.hashCancellation.selector, bytes4(0x4fa747bf), "hashCancellation");
     }
 
@@ -203,7 +204,7 @@ contract FixedMandateTest is Test {
 
         vm.expectEmit(true, true, true, true, address(executor));
         emit IFixedMandate.MandateOpened(
-            id, payer, biller, address(token), recipient, AMOUNT, PERIOD, 12, START, mandate.nonce, TERMS_HASH
+            id, payer, biller, address(token), recipient, AMOUNT, PERIOD, 0, 12, START, mandate.nonce, TERMS_HASH
         );
         vm.recordLogs();
         bytes32 returnedId = executor.openMandate(
@@ -239,6 +240,142 @@ contract FixedMandateTest is Test {
 
         (,, uint256 startedAt,) = executor.mandateStates(executor.mandateId(mandate));
         assertEq(startedAt, deadline, "signatures remain valid at the exact deadline");
+    }
+
+    function test_DeferredMandateOpensWithBothSignatures() public {
+        _assertDeferredOpening(0);
+    }
+
+    function test_DeferredMandateOpensAsPayer() public {
+        _assertDeferredOpening(1);
+    }
+
+    function test_DeferredMandateOpensAsBiller() public {
+        _assertDeferredOpening(2);
+    }
+
+    function test_ExplicitFirstPaymentAtIsIndependentOfOpeningTime() public {
+        IFixedMandate.Mandate memory mandate = _defaultMandate(101);
+        mandate.firstPaymentAt = START + PERIOD;
+        uint256 deadline = START + 2 * PERIOD;
+        bytes memory payerSignature = _signAuthorization(payerPk, mandate, deadline);
+        bytes memory billerSignature = _signAcceptance(billerPk, mandate, deadline);
+
+        vm.warp(deadline);
+        vm.prank(other);
+        executor.openMandate(mandate, deadline, deadline, payerSignature, billerSignature);
+
+        (,, uint256 startedAt,) = executor.mandateStates(executor.mandateId(mandate));
+        assertEq(startedAt, deadline, "actual opening timestamp stored");
+        assertEq(executor.unlockedPaymentCount(mandate), 2, "opening does not shift explicit schedule");
+        executor.settle(mandate, 0);
+        executor.settle(mandate, 1);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 2);
+        assertEq(token.balanceOf(recipient), 2 * AMOUNT, "accrued payments collected in succession");
+    }
+
+    function test_ExplicitFirstPaymentAtEqualToOpeningUnlocksImmediately() public {
+        IFixedMandate.Mandate memory mandate = _defaultMandate(101);
+        mandate.firstPaymentAt = START;
+        _openMandate(mandate);
+        assertEq(executor.unlockedPaymentCount(mandate), 1, "first unlock is inclusive");
+        executor.settle(mandate, 0);
+        assertEq(token.balanceOf(recipient), AMOUNT);
+    }
+
+    function test_DeferredScheduleBoundariesCatchUpAndFiniteCap() public {
+        IFixedMandate.Mandate memory mandate = _defaultMandate(101);
+        mandate.firstPaymentAt = START + 7 days;
+        mandate.totalPayments = 3;
+        _openMandate(mandate);
+
+        vm.warp(mandate.firstPaymentAt - 1);
+        assertEq(executor.unlockedPaymentCount(mandate), 0);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 0);
+
+        vm.warp(mandate.firstPaymentAt);
+        assertEq(executor.unlockedPaymentCount(mandate), 1);
+        executor.settle(mandate, 0);
+        vm.warp(mandate.firstPaymentAt + PERIOD - 1);
+        assertEq(executor.unlockedPaymentCount(mandate), 1);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 1);
+
+        vm.warp(mandate.firstPaymentAt + PERIOD);
+        assertEq(executor.unlockedPaymentCount(mandate), 2);
+        vm.warp(mandate.firstPaymentAt + 10 * PERIOD);
+        assertEq(executor.unlockedPaymentCount(mandate), 3, "finite cap survives delayed collection");
+        executor.settle(mandate, 1);
+        executor.settle(mandate, 2);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 3);
+
+        (,,, uint256 settledCount) = executor.mandateStates(executor.mandateId(mandate));
+        assertEq(settledCount, 3);
+        assertEq(token.balanceOf(recipient), 3 * AMOUNT);
+        assertEq(token.balanceOf(payer), 100_000e6 - 3 * AMOUNT);
+    }
+
+    function test_PastFirstPaymentAtAllowsFiniteCatchUpOnOpening() public {
+        IFixedMandate.Mandate memory mandate = _defaultMandate(101);
+        mandate.firstPaymentAt = START - 10 * PERIOD;
+        mandate.totalPayments = 3;
+        _openMandate(mandate);
+
+        assertEq(executor.unlockedPaymentCount(mandate), 3, "past schedule capped on opening");
+        for (uint256 i; i < 3; ++i) {
+            executor.settle(mandate, i);
+        }
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 3);
+        assertEq(token.balanceOf(recipient), 3 * AMOUNT);
+    }
+
+    function test_FirstPaymentAtSupportsFullUint256Range() public {
+        IFixedMandate.Mandate memory mandate = _defaultMandate(101);
+        mandate.firstPaymentAt = type(uint256).max;
+        mandate.periodLength = type(uint256).max;
+        _openMandate(mandate);
+
+        assertEq(executor.unlockedPaymentCount(mandate), 0, "timestamp not truncated to stored uint120");
+        vm.warp(type(uint256).max - 1);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 0);
+        vm.warp(type(uint256).max);
+        assertEq(executor.unlockedPaymentCount(mandate), 1);
+        executor.settle(mandate, 0);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 1);
+        assertEq(token.balanceOf(recipient), AMOUNT);
+    }
+
+    function test_RevertWhen_FutureFirstPaymentAtChangedToZeroInSignatures() public {
+        _assertFirstPaymentAtSignaturesBound(START + PERIOD, 0);
+    }
+
+    function test_RevertWhen_FirstPaymentAtChangedForOpenedMandate() public {
+        IFixedMandate.Mandate memory mandate = _defaultMandate(101);
+        mandate.firstPaymentAt = START + PERIOD;
+        _openMandate(mandate);
+        bytes32 originalId = executor.mandateId(mandate);
+
+        mandate.firstPaymentAt = 0;
+        assertNotEq(executor.mandateId(mandate), originalId);
+        vm.expectRevert(IFixedMandate.MandateNotOpen.selector);
+        executor.settle(mandate, 0);
+        vm.expectRevert(IFixedMandate.MandateNotOpen.selector);
+        executor.unlockedPaymentCount(mandate);
+        vm.prank(payer);
+        vm.expectRevert(IFixedMandate.MandateNotOpen.selector);
+        executor.cancelMandateAsPayer(mandate);
+
+        (bool opened, bool cancelled,, uint256 settledCount) = executor.mandateStates(originalId);
+        assertTrue(opened);
+        assertFalse(cancelled);
+        assertEq(settledCount, 0);
+        assertEq(token.balanceOf(recipient), 0);
     }
 
     function test_OpenMandateAsPayerUsesCallerAuthorityAndBillerAcceptance() public {
@@ -1381,6 +1518,34 @@ contract FixedMandateTest is Test {
 
     // Fuzz coverage
 
+    function testFuzz_FirstPaymentAtIsBoundByBothParties(uint256 signedTimestamp, uint256 submittedTimestamp) public {
+        vm.assume(signedTimestamp != submittedTimestamp);
+        _assertFirstPaymentAtSignaturesBound(signedTimestamp, submittedTimestamp);
+    }
+
+    function testFuzz_UnlockedCountMatchesExplicitSchedule(
+        uint256 rawFirstPaymentAt,
+        uint256 rawTimestamp,
+        uint256 rawPeriod,
+        uint256 total
+    ) public {
+        IFixedMandate.Mandate memory mandate = _defaultMandate(101);
+        mandate.firstPaymentAt = bound(rawFirstPaymentAt, 1, type(uint256).max);
+        mandate.periodLength = bound(rawPeriod, 1, type(uint256).max);
+        mandate.totalPayments = total;
+        _openMandate(mandate);
+        uint256 timestamp = bound(rawTimestamp, START, type(uint256).max);
+        vm.warp(timestamp);
+
+        uint256 expected;
+        if (timestamp >= mandate.firstPaymentAt) {
+            // A nonzero explicit anchor leaves room for the inclusive first occurrence.
+            expected = (timestamp - mandate.firstPaymentAt) / mandate.periodLength + 1;
+            if (total != 0 && expected > total) expected = total;
+        }
+        assertEq(executor.unlockedPaymentCount(mandate), expected);
+    }
+
     function testFuzz_PayerCancellationEmitsConsumedNonce(uint256 cancelNonce, uint8 signatureFormat) public {
         _assertCancellationNonceEvent(false, 100, cancelNonce, signatureFormat % 3);
     }
@@ -1549,6 +1714,85 @@ contract FixedMandateTest is Test {
 
     // Helpers
 
+    function _assertDeferredOpening(uint8 route) internal {
+        IFixedMandate.Mandate memory mandate = _defaultMandate(101);
+        mandate.firstPaymentAt = START + PERIOD;
+        uint256 deadline = START + 1 hours;
+        bytes memory payerSignature = _signAuthorization(payerPk, mandate, deadline);
+        bytes memory billerSignature = _signAcceptance(billerPk, mandate, deadline);
+        bytes32 id = executor.mandateId(mandate);
+
+        vm.expectEmit(true, true, true, true, address(executor));
+        emit IFixedMandate.MandateOpened(
+            id,
+            payer,
+            biller,
+            address(token),
+            recipient,
+            AMOUNT,
+            PERIOD,
+            mandate.firstPaymentAt,
+            12,
+            START,
+            mandate.nonce,
+            TERMS_HASH
+        );
+        bytes32 returnedId;
+        if (route == 0) {
+            vm.prank(other);
+            returnedId = executor.openMandate(mandate, deadline, deadline, payerSignature, billerSignature);
+        } else if (route == 1) {
+            vm.prank(payer);
+            returnedId = executor.openMandateAsPayer(mandate, deadline, billerSignature);
+        } else {
+            vm.prank(biller);
+            returnedId = executor.openMandateAsBiller(mandate, deadline, payerSignature);
+        }
+
+        assertEq(returnedId, id);
+        (bool opened, bool cancelled, uint256 startedAt, uint256 settledCount) = executor.mandateStates(id);
+        assertTrue(opened);
+        assertFalse(cancelled);
+        assertEq(startedAt, START, "opening time differs from first payment time");
+        assertEq(settledCount, 0);
+        assertEq(executor.nonceBitmap(payer, 0), uint256(1) << mandate.nonce);
+        assertEq(executor.unlockedPaymentCount(mandate), 0);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 0);
+        (,,, settledCount) = executor.mandateStates(id);
+        assertEq(settledCount, 0, "early settlement does not consume a payment");
+        assertEq(token.balanceOf(payer), 100_000e6);
+        assertEq(token.balanceOf(recipient), 0);
+    }
+
+    function _assertFirstPaymentAtSignaturesBound(uint256 signedTimestamp, uint256 submittedTimestamp) internal {
+        IFixedMandate.Mandate memory mandate = _defaultMandate(101);
+        mandate.firstPaymentAt = signedTimestamp;
+        uint256 deadline = START + 1 hours;
+        bytes32 originalId = executor.mandateId(mandate);
+        bytes memory payerSignature = _signAuthorization(payerPk, mandate, deadline);
+        bytes memory billerSignature = _signAcceptance(billerPk, mandate, deadline);
+        mandate.firstPaymentAt = submittedTimestamp;
+        assertNotEq(executor.mandateId(mandate), originalId, "timestamp binds mandate identity");
+        bytes memory freshPayerSignature = _signAuthorization(payerPk, mandate, deadline);
+        bytes memory freshBillerSignature = _signAcceptance(billerPk, mandate, deadline);
+
+        vm.expectRevert(IFixedMandate.InvalidSignature.selector);
+        executor.openMandate(mandate, deadline, deadline, payerSignature, freshBillerSignature);
+        vm.expectRevert(IFixedMandate.InvalidSignature.selector);
+        executor.openMandate(mandate, deadline, deadline, freshPayerSignature, billerSignature);
+        vm.prank(biller);
+        vm.expectRevert(IFixedMandate.InvalidSignature.selector);
+        executor.openMandateAsBiller(mandate, deadline, payerSignature);
+        vm.prank(payer);
+        vm.expectRevert(IFixedMandate.InvalidSignature.selector);
+        executor.openMandateAsPayer(mandate, deadline, billerSignature);
+
+        (bool opened,,,) = executor.mandateStates(executor.mandateId(mandate));
+        assertFalse(opened);
+        assertEq(executor.nonceBitmap(payer, 0), 0, "rejected signatures leave nonce available");
+    }
+
     function _defaultMandate(uint256 nonce) internal view returns (IFixedMandate.Mandate memory mandate) {
         mandate = IFixedMandate.Mandate({
             payer: payer,
@@ -1557,6 +1801,7 @@ contract FixedMandateTest is Test {
             token: address(token),
             amountPerPayment: AMOUNT,
             periodLength: PERIOD,
+            firstPaymentAt: 0,
             totalPayments: 12,
             termsHash: TERMS_HASH,
             nonce: nonce
@@ -1768,7 +2013,7 @@ contract FixedMandateTest is Test {
         return keccak256(
             abi.encode(
                 keccak256(
-                    "Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
+                    "Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 firstPaymentAt,uint256 totalPayments,bytes32 termsHash,uint256 nonce)"
                 ),
                 mandate.payer,
                 mandate.biller,
@@ -1776,6 +2021,7 @@ contract FixedMandateTest is Test {
                 mandate.token,
                 mandate.amountPerPayment,
                 mandate.periodLength,
+                mandate.firstPaymentAt,
                 mandate.totalPayments,
                 mandate.termsHash,
                 mandate.nonce

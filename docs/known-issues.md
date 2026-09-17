@@ -1,6 +1,6 @@
 # Known Issues And Limitations
 
-Scope: `FixedMandate` and its inherited helpers at commit `d13c12d85ad6b61d0b47fd36bec07b66e11516db`.
+Scope: the current `FixedMandate` implementation and inherited helpers, including signed first-payment timing.
 Reviewed against source and repository tests on 2026-09-17. This is a code-grounded register, not an exhaustive
 vulnerability list, independent audit opinion, or production approval. Statuses describe this snapshot; proposed
 changes below are not implemented.
@@ -29,8 +29,9 @@ follows from the checked `uint120` increment, not an exhaustive settlement run.
 
 Opening nonces belong to the payer. A biller calling `invalidateUnorderedNonces` affects its own bitmap, not a distinct
 payer's authorization. There is no biller-acceptance nonce or pre-opening cancellation state. A holder with the required
-counterparty authority can still open before the acceptance deadline; payment index `0` then unlocks immediately.
-Cancelling after opening does not guarantee that it precedes collection.
+counterparty authority can still open before the acceptance deadline. Collection becomes eligible once both opening and
+the effective first-payment time have been reached. A future start allows cancellation before collection unlocks, but
+does not revoke the unused acceptance. Cancelling after opening does not guarantee that it precedes eligible collection.
 
 **Current mitigation:** Use deliberate acceptance deadlines and coordinate payer nonce invalidation when withdrawing
 unopened terms. An ERC-1271 wallet may invalidate a signature by changing its own policy, but this is wallet-specific,
@@ -63,9 +64,10 @@ invalidation with an event, preserving independence from opening nonces.
 ## Numeric Assumption
 
 Opening casts `block.timestamp` to `uint120` without a range check. An opening timestamp above `2^120 - 1` would be
-truncated and produce an incorrect schedule anchor. This is not a plausible current-chain timestamp, but exact-anchor
-claims assume that bound and nondecreasing canonical time. The timestamp fuzz test covers `uint64`, not the truncation
-boundary. See [invariant assumptions](./invariants.md).
+truncated and produce incorrect opening metadata and, when `firstPaymentAt == 0`, an incorrect schedule anchor. A nonzero
+`firstPaymentAt` is a full-width signed timestamp and is not narrowed. This is not a plausible current-chain opening
+timestamp, but exact opening-time claims assume that bound and nondecreasing canonical time. The opening timestamp fuzz
+test covers `uint64`, not the truncation boundary. See [invariant assumptions](./invariants.md).
 
 ## Deliberate Behavior, Not Additional Findings
 

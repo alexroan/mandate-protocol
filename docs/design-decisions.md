@@ -1,7 +1,8 @@
 # Design Decisions
 
-Scope: the `FixedMandate` implementation at `d13c12d`. These are current design choices and their tradeoffs, not a
-historical decision log or a description of a variable-payment executor. See [PROTOCOL.md](../PROTOCOL.md) for the API.
+Scope: the current `FixedMandate` implementation, including signed first-payment timing. These are current design choices
+and their tradeoffs, not a historical decision log or a description of a variable-payment executor.
+See [PROTOCOL.md](../PROTOCOL.md) for the API.
 
 ## 1. Immutable, Shared, Noncustodial Spender
 
@@ -22,17 +23,22 @@ allowance; payment readiness is independent of agreement formation.
 ## 3. Hash-Committed Terms, Minimal Stored State
 
 The domain-separated mandate digest is the storage key. Callers supply the full terms for later operations rather than
-loading another stored copy. Changing a party, recipient, token, amount, cadence, total, metadata hash, or nonce selects
-a different mandate; it cannot modify an opened mandate. `MandateOpened` publishes the terms for reconstruction.
-`termsHash` commits to external material, but the contract neither retrieves nor enforces that material.
+loading another stored copy. Changing a party, recipient, token, amount, cadence, first-payment timestamp, total, metadata
+hash, or nonce selects a different mandate; it cannot modify an opened mandate. `MandateOpened` publishes the terms for
+reconstruction. `termsHash` commits to external material, but the contract neither retrieves nor enforces that material.
 
-## 4. Opening Anchors A Nonexpiring Schedule
+## 4. Signed First-Payment Timing, Nonexpiring Catch-Up
 
-Opening records the block timestamp and immediately unlocks index `0`; each `periodLength` seconds unlocks another
-occurrence. There is no signed start time, expiry, settlement window, or calendar-month calculation. An eligible opener
-can choose when to submit within the required signature deadlines, affecting the schedule anchor. Unpaid unlocked
-occurrences remain collectible in rapid sequential catch-up. Positive `totalPayments` caps the schedule; zero selects
-an open-ended schedule, subject to the implementation limit below.
+The signed `firstPaymentAt` selects an absolute first unlock; zero uses the actual opening timestamp instead. The stored
+`startedAt` always records opening, not an explicit schedule anchor. This lets parties open ahead of collection without
+adding lifecycle flags or a second scheduling mode. Nothing unlocks before the effective start; index `0` unlocks at it,
+then each `periodLength` seconds unlocks another occurrence.
+
+An eligible opener can affect the anchor through submission timing only when `firstPaymentAt` is zero. Past explicit
+timestamps are accepted: opening late preserves the agreed schedule and exposes accrued payments rather than resetting
+it. Unpaid unlocked occurrences remain collectible in rapid sequential catch-up. Positive `totalPayments` caps the
+schedule; zero selects an open-ended schedule, subject to the implementation limit below. There is no expiry,
+settlement window, or calendar-month calculation. Signature deadlines govern opening, not the first unlock.
 
 ## 5. Permissionless, Sequential Settlement Without Fees
 

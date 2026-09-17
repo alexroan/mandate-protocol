@@ -7,6 +7,56 @@ import {SafeFixture, Safe, Enum} from "./helpers/SafeFixture.sol";
 import {MockERC20} from "./helpers/MandateMocks.sol";
 
 abstract contract FixedMandateSafeCancellationTest is SafeFixture {
+    function test_FutureMandatesCanBeCancelledBeforeFirstPaymentThroughEverySafeRoute() public {
+        assertTrue(
+            _execSafe(
+                payerSafe,
+                address(token),
+                abi.encodeCall(MockERC20.approve, (address(executor), 12 * AMOUNT)),
+                Enum.Operation.Call
+            )
+        );
+        for (uint256 route; route < 4; ++route) {
+            IFixedMandate.Mandate memory mandate = _mandate(route + 1);
+            mandate.firstPaymentAt = START + PERIOD;
+            _open(mandate);
+            assertEq(executor.unlockedPaymentCount(mandate), 0);
+
+            if (route < 2) {
+                Safe authorizer = route == 0 ? payerSafe : billerSafe;
+                bytes memory data = route == 0
+                    ? abi.encodeCall(FixedMandate.cancelMandateAsPayer, (mandate))
+                    : abi.encodeCall(FixedMandate.cancelMandateAsBiller, (mandate));
+                assertTrue(_execSafe(authorizer, address(executor), data, Enum.Operation.Call));
+            } else {
+                Safe authorizer = route == 2 ? payerSafe : billerSafe;
+                bytes memory signature = _cancellationSignature(mandate, authorizer, 35);
+                vm.prank(relayer);
+                if (route == 2) {
+                    executor.cancelMandateWithPayerSignature(mandate, 35, DEADLINE, signature);
+                } else {
+                    executor.cancelMandateWithBillerSignature(mandate, 35, DEADLINE, signature);
+                }
+                _assertNonceUsedBySafeOnly(authorizer, 35);
+            }
+            _assertState(mandate, true, true, 0);
+        }
+
+        vm.warp(START + PERIOD);
+        for (uint256 route; route < 4; ++route) {
+            IFixedMandate.Mandate memory mandate = _mandate(route + 1);
+            mandate.firstPaymentAt = START + PERIOD;
+            vm.expectRevert(IFixedMandate.MandateCancelled.selector);
+            executor.settle(mandate, 0);
+            _assertState(mandate, true, true, 0);
+        }
+        assertEq(token.balanceOf(address(payerSafe)), 100_000e6);
+        assertEq(token.balanceOf(recipient), 0);
+        assertEq(token.allowance(address(payerSafe), address(executor)), 12 * AMOUNT);
+        assertEq(payerSafe.nonce(), 2, "token approval and direct payer cancellation");
+        assertEq(billerSafe.nonce(), 1, "direct biller cancellation");
+    }
+
     function test_SafePayerCancelsThroughThresholdApprovedTransaction() public {
         IFixedMandate.Mandate memory mandate = _mandate(1);
         bytes32 id = _open(mandate);

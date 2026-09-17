@@ -13,11 +13,12 @@ tokens, but they do not express the exact amount and cadence, which recipient ma
 parties accepted the same schedule, or when either party has stopped the relationship.
 
 `FixedMandate` is an immutable allowance-based direct-debit primitive for exact recurring payments. A
-payer authorizes complete fixed terms and a biller accepts those same terms. Opening the mandate records the current
-block timestamp as its schedule anchor and makes payment index zero immediately collectible. One additional occurrence
-unlocks after each fixed-duration period. Each successful settlement consumes exactly the next index and pulls the
-exact nominal amount accepted at creation in one transfer to the pinned recipient. Settlement submission is
-permissionless: any address may cause the next unlocked occurrence to be collected, receives no protocol funds, and
+payer authorizes complete fixed terms and a biller accepts those same terms. A signed first-payment timestamp selects
+the schedule anchor; zero uses the actual opening timestamp instead. Index zero unlocks at that anchor, and one
+additional occurrence unlocks after each fixed-duration period. Collection requires an opened mandate, so opening after
+an explicit start exposes accrued payments without shifting the schedule. Each successful settlement consumes exactly
+the next index and pulls the exact nominal amount accepted at creation in one transfer to the pinned recipient.
+Settlement submission is permissionless: any address may cause the next unlocked occurrence to be collected, receives no protocol funds, and
 cannot redirect the transfer. Missed occurrences remain immediately collectible in sequence, so offchain grace,
 preferred-operator, pause, or retry-pacing policies are not enforceable by the contract.
 
@@ -65,7 +66,7 @@ The first is **token spending authority**. The payer grants ERC-20 allowance to 
 source of truth for whether `transferFrom` succeeds.
 
 The second is **mandate authority**. The payer authorizes the biller, token, recipient, exact payment amount, cadence,
-finite or open-ended schedule, offchain terms commitment, and payer nonce.
+first-payment timestamp, finite or open-ended schedule, offchain terms commitment, and payer nonce.
 
 The third is **biller acceptance**. The biller accepts the same complete mandate before it can become active. This
 prevents one-sided active records and proves that the biller accepted the recipient, amount, token, schedule, and
@@ -107,8 +108,8 @@ The payer should see a commercial schedule rather than raw allowance plumbing:
 ```text
 Authorize Acme Billing
 Payment: exactly 15 USDC
-Cadence: every 30 days from onchain opening
-First payment: collectible immediately after opening
+Cadence: every 30 days from the first-payment timestamp
+First payment: October 1, 2026 at 00:00 UTC
 Schedule: 12 payments
 Recipient: Acme Treasury
 Settlement submission: permissionless
@@ -118,9 +119,10 @@ Offchain grace or pacing: not enforced by the contract
 Cancellation: payer or biller; a settlement ordered first can still succeed
 ```
 
-The display must distinguish a fixed number of seconds from a calendar month. It must also show whether the schedule is
-finite or open-ended, how many occurrences have settled, how many are currently unlocked, and the total unlocked
-backlog that could be collected immediately.
+The display must distinguish a fixed number of seconds from a calendar month. It must show the selected first-payment
+time, or that zero means start on opening, and whether the schedule is finite or open-ended. It must also show how many
+occurrences have settled, how many are currently unlocked, and the total unlocked backlog that could be collected
+immediately. Opening after an explicit first-payment time does not discard arrears.
 
 The payer can authorize opening with an EIP-712 signature, an ERC-1271 contract signature, or a direct call from the
 payer address. A direct payer call replaces only the payer signature; biller acceptance is still required.
@@ -135,7 +137,7 @@ The fixed biller flow is:
 ```text
 1. Negotiate the complete fixed mandate with the payer.
 2. Accept those exact terms by signature or direct transaction.
-3. Observe the opened mandate and its generated start.
+3. Observe the opened mandate and resolve its signed or opening-time schedule anchor.
 4. Observe or submit permissionless settlement of unlocked occurrences.
 5. Reconcile settlement and cancellation events.
 ```
@@ -195,7 +197,7 @@ and calls `transferFrom`.
 
 1. **No payment guarantee.** A valid mandate does not guarantee balance, allowance, or token availability.
 2. **No changing payment amounts.** Any material schedule change requires a new mandate.
-3. **No calendar billing engine.** Cadence is a fixed number of seconds from the generated start.
+3. **No calendar billing engine.** Cadence is a fixed number of seconds from the effective first-payment time.
 4. **No settlement window, pause, or grace period.** Once an occurrence unlocks, it remains immediately collectible
    until settlement or cancellation; offchain pacing is non-binding.
 5. **No automatic transaction scheduling.** An external actor must submit every settlement, but no actor is privileged.
@@ -246,7 +248,9 @@ A fixed settlement succeeds only when all of the following are true:
 The contract does not explicitly query balance and allowance before settlement. It relies on the token to accept or
 reject `transferFrom`. A failed token call reverts the complete settlement.
 
-Index zero unlocks at opening. Missed occurrences are not assigned to separate settlement windows and do not expire.
+Index zero unlocks at the signed first-payment time, or at opening when that field is zero. Before a future start no
+payment can settle, even if the mandate is already open. Missed occurrences are not assigned to separate settlement
+windows and do not expire.
 If five indices are unlocked and none has settled, any address can submit indices zero through four in rapid succession.
 The contract cannot enforce an offchain grace period, collection pause, preferred operator, or slower retry cadence
 after those indices unlock.
@@ -265,17 +269,23 @@ The `Mandate` object binds:
 | `token` | ERC-20 address used for payment |
 | `amountPerPayment` | Exact nominal amount pulled for every occurrence |
 | `periodLength` | Fixed number of seconds between occurrence unlocks |
+| `firstPaymentAt` | Unix timestamp of the first unlock; zero uses the actual opening timestamp |
 | `totalPayments` | Finite occurrence count, or zero for an open-ended schedule |
 | `termsHash` | Nonzero commitment to offchain commercial terms or metadata |
 | `nonce` | Payer unordered nonce used for uniqueness, replay protection, and pre-opening invalidation |
 
-These nine fields and their order form the canonical signed schema. No field selects or rewards a settlement submitter.
+These ten fields and their order form the canonical signed schema. No field selects or rewards a settlement submitter.
 The mandate digest is EIP-712 domain-separated by chain and `FixedMandate` deployment. Changing any field produces a
 different mandate identity.
 
-The schedule start and signature deadlines are not mandate fields. The contract generates `startedAt` from
-`block.timestamp` when opening succeeds. Payer and biller authorization wrappers each carry their own submission
-deadline.
+`firstPaymentAt` is a signed mandate field. The contract separately records `startedAt` from `block.timestamp` when
+opening succeeds; it uses that timestamp as the anchor only when the signed field is zero. Payer and biller authorization
+wrappers each carry their own submission deadline. Deadlines constrain opening, not when an opened schedule may begin.
+
+The ten-field schema is incompatible with previous nine-field signatures, calldata, and opening-event decoders. The
+EIP-712 domain remains `FixedMandate`, version `1`, while mandate and nested opening type hashes change. Existing
+immutable deployments retain their old behavior; the updated creation bytecode produces a different CREATE2 address
+under the same deployer and salt. Integrations must target the correct deployment and schema.
 
 ### Payer authorization and biller acceptance
 
@@ -329,7 +339,8 @@ offchain terms
 -> payer authorization
 -> biller acceptance
 -> opening transaction
--> generated onchain start and immediately unlocked index zero
+-> recorded opening timestamp and resolved first-payment anchor
+-> wait for the first unlock, or expose payments already accrued
 -> sequential settlement of unlocked occurrences
 -> finite payment completion and/or cancellation
 ```
@@ -358,20 +369,28 @@ Opening rejects a mandate when:
 
 There is no operator or protocol-payment field to validate.
 
+`firstPaymentAt` accepts zero or any nonzero `uint256` timestamp. Past dates are intentional: they preserve the agreed
+schedule and permit catch-up when opening is delayed. Future dates prevent early collection without delaying opening.
+
 The reference implementation accepts some finite count values that its settlement counter cannot represent. Those
 mandates can open but cannot complete. Integrations must reject unsupported counts, and production should align opening
 validation with settlement state. An open-ended mandate has the same technical execution ceiling, but it is not a
 payer-selected spend limit or useful protection.
 
-### Generated schedule start
+### First-payment time and opening timestamp
 
-Opening records the current block timestamp after authorization checks pass. Index zero is immediately unlocked. The
-parties do not sign an intended future start.
+Opening records the current block timestamp as `startedAt` after authorization checks pass. The effective schedule
+anchor is `firstPaymentAt` when nonzero, otherwise `startedAt`. Before that anchor the unlocked count is zero; at it,
+index zero unlocks. Each subsequent period unlocks another occurrence, capped by a finite total when selected.
 
-This lets the opening-transaction submitter choose when to seek inclusion while the applicable opening-signature
-deadline or deadlines remain valid; the block producer supplies the timestamp ultimately recorded. Checkout and
-billing systems should use suitable deadlines, submit promptly, wait for finality, and present the actual `startedAt`
-from the opening event rather than an offchain estimate.
+With zero, the opening-transaction submitter can affect the anchor by choosing when to seek inclusion while the required
+signatures remain valid; the block producer supplies the actual timestamp. A nonzero anchor cannot be shifted by the
+opener. Opening after it makes already-accrued occurrences eligible for sequential collection immediately, rather than
+restarting the schedule. No tokens move during opening itself.
+
+Checkout and billing systems should present the signed first-payment time, use deliberate signature deadlines, wait for
+finality, and distinguish actual opening time from effective schedule start. A signature deadline may precede the first
+payment, allowing a mandate to open in advance. The first-payment timestamp does not add calendar-month arithmetic.
 
 ### Creation identity and replay protection
 
@@ -391,7 +410,7 @@ For each mandate ID the contract stores:
 |---|---|
 | `opened` | Proves aligned authority created the mandate |
 | `cancelled` | Blocks all later settlement |
-| `startedAt` | Contract-generated schedule anchor |
+| `startedAt` | Actual opening timestamp; schedule anchor only when `firstPaymentAt` is zero |
 | `settledPaymentCount` | Number of consumed occurrences and exact next payment index |
 
 It also stores:
@@ -425,15 +444,20 @@ resulting ERC-20 allowance to expire.
 For an opened mandate:
 
 ```text
-elapsed periods = floor((current block time - startedAt) / periodLength)
-unlocked count = elapsed periods + 1
+effective start = firstPaymentAt == 0 ? startedAt : firstPaymentAt
+if current block time < effective start:
+    unlocked count = 0
+else:
+    elapsed periods = floor((current block time - effective start) / periodLength)
+    unlocked count = min(elapsed periods + 1, 2^256 - 1)
 
 if totalPayments is nonzero:
     unlocked count = min(unlocked count, totalPayments)
 ```
 
-An attempted index must equal `settledPaymentCount` and be lower than the unlocked count. This enforces both sequencing
-and time. It also caps a finite schedule without mutating separate period state.
+The count above uses mathematical addition and saturates rather than overflowing. An attempted index must equal
+`settledPaymentCount` and be lower than the unlocked count. This enforces both sequencing and time. It also caps a finite
+schedule without mutating separate period state.
 
 ### Permissionless submission and exact amount transfer
 
@@ -614,16 +638,17 @@ cancellation nonce.
 Contract addresses are validated exclusively through ERC-1271. An ECDSA signature by a contract wallet's owner is not
 accepted as a substitute for the wallet's own ERC-1271 policy. EOA validation supports ordinary and compact signatures.
 
-Applications must render chain, `FixedMandate` address, payer, biller, recipient, token, amount, cadence, count, terms
-commitment, nonce, and deadline before signing. They must also disclose that settlement is permissionless and unlocked
-arrears can be collected immediately.
+Applications must render chain, `FixedMandate` address, payer, biller, recipient, token, amount, cadence, first-payment
+time, count, terms commitment, nonce, and deadline before signing. They must also disclose that settlement is permissionless
+and unlocked arrears can be collected immediately.
 
 ### Schedule-anchor risk
 
-Because `startedAt` is generated rather than signed, a relayer holding both opening signatures controls when to seek
-inclusion while both remain valid; the block producer supplies the confirmed block timestamp that becomes the anchor.
-Short, deliberate deadlines and prompt submission limit relayer discretion. Systems must use the confirmed opening
-record as the schedule source of truth.
+When `firstPaymentAt` is zero, a relayer holding both opening signatures can affect the anchor by choosing when to seek
+inclusion while both remain valid; the block producer supplies the confirmed opening timestamp. Short, deliberate
+deadlines and prompt submission limit that discretion. A nonzero signed timestamp fixes the anchor, but late opening
+can expose multiple immediately collectible occurrences. Systems must resolve the anchor from the signed field and
+confirmed opening record, and disclose any already-accrued backlog before submission.
 
 ### Token risk
 
@@ -660,7 +685,7 @@ Indexers must handle chain reorganizations before treating records as operationa
 
 | Record | Purpose |
 |---|---|
-| `MandateOpened` | Identifies the nine-field opened schedule and its generated start |
+| `MandateOpened` | Identifies the ten-field opened schedule, including `firstPaymentAt`, and its actual opening timestamp |
 | `PaymentSettled` | Identifies one consumed zero-based payment index, full nominal amount, and immediate submitter |
 | `MandateCancellation` | Identifies the mandate and payer or biller that directly called or signed cancellation |
 | `CancellationNonceConsumed` | Identifies the indexed `authorizer` and `cancelNonce` consumed by signed cancellation |
@@ -688,7 +713,7 @@ payment complete from a pending transaction simulation or reverted receipt.
 
 Relevant read surfaces include:
 
-- `mandateStates(mandateId)` for opened, cancelled, start, and settled count;
+- `mandateStates(mandateId)` for opened, cancelled, actual opening timestamp, and settled count;
 - `unlockedPaymentCount(mandate)` for a current opened and uncancelled schedule;
 - `nonceBitmap(payer, wordPos)` for opening nonce status;
 - `cancellationNonceUsed(authorizer, nonce)` for signed cancellation status;
@@ -698,6 +723,9 @@ Relevant read surfaces include:
 `unlockedPaymentCount` reverts after cancellation. Historical products should retain events and read stored mandate state
 rather than depending on that convenience view alone.
 
+Reconstruction must retain the original signed `firstPaymentAt`, including zero. Replacing zero with the generated
+opening timestamp would change the mandate ID; resolve an effective start separately for scheduling and display.
+
 ## 18. Full-stack product boundary
 
 The contract deliberately leaves product behavior offchain. A usable system still needs:
@@ -706,7 +734,7 @@ The contract deliberately leaves product behavior offchain. A usable system stil
 - typed-data construction and human-readable signing screens;
 - token approval and allowance runway UX;
 - relayed opening and confirmation tracking;
-- a scheduler that derives newly unlocked indices from confirmed `startedAt`;
+- a scheduler that resolves `firstPaymentAt`, using confirmed `startedAt` only when the signed field is zero;
 - settlement preflight, submission, replacement, retry, and gas management;
 - event indexing with reorg handling;
 - reconciliation of payment amounts, recipient proceeds, and submitter provenance;
@@ -749,7 +777,7 @@ The reference implementation includes:
 - EOA, EIP-2098, normalized recovery-ID, and ERC-1271 signature handling;
 - neutral-relay, direct-payer, and direct-biller opening;
 - payer unordered opening nonces and bitmap invalidation;
-- contract-generated start and immediate index-zero unlock;
+- signed first-payment timing, with zero selecting immediate index-zero unlock on opening;
 - finite and open-ended fixed schedules;
 - sequential catch-up settlement;
 - permissionless settlement submission with factual submitter provenance;
@@ -781,7 +809,7 @@ the route, observers can learn or infer:
 
 - payer, biller, recipient, and settlement submitter addresses, plus the `FixedMandate` deployment address;
 - token, exact amount, cadence, and schedule size;
-- payer nonce, terms commitment, generated start, and payment index;
+- payer nonce, terms commitment, first-payment time, actual opening timestamp, and payment index;
 - authorization deadlines and submitted signatures; and
 - payment timing, arrears catch-up, cancellation, allowance, and balances.
 
@@ -801,13 +829,15 @@ The implementation and full stack should be validated against behavior, not only
 
 Required opening properties include:
 
-- every one of the nine mandate fields and the signature domain affect mandate identity;
+- every one of the ten mandate fields and the signature domain affect mandate identity;
 - no route opens without the required payer and biller authority;
 - direct routes replace only the caller's own signature;
 - expired, malformed, wrong-role, wrong-domain, and altered-term signatures fail;
 - ERC-1271 policy is respected for contract accounts;
 - invalid mandate fields fail before state is created;
-- successful opening records the actual block timestamp and unlocks only index zero initially;
+- successful opening records the actual block timestamp regardless of the selected first-payment time;
+- zero starts on opening, a future timestamp unlocks nothing early, and a past timestamp preserves accrued payments;
+- changing the first-payment timestamp invalidates existing opening signatures rather than shifting an opened schedule;
 - a payer nonce cannot open two mandates; and
 - bitmap invalidation blocks later use without affecting already opened mandates.
 
@@ -857,7 +887,7 @@ This paper does not propose its mechanism.
 
 The difficult part of an exact recurring stablecoin payment is not moving tokens. It is expressing a standing schedule
 that payer, biller, wallet, submitter, indexer, and support systems can all interpret the same way. Bilateral creation,
-contract-generated start, sequential time unlocks, permissionless submission, full-amount transfers to the recipient, and
+agreed first-payment timing, sequential time unlocks, permissionless submission, full-amount transfers to the recipient, and
 bilateral cancellation provide that shared object without custody, token-standard changes, or merchant-specific
 spender contracts.
 

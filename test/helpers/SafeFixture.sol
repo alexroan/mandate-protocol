@@ -136,6 +136,7 @@ abstract contract SafeFixture is Test {
             token: address(token),
             amountPerPayment: AMOUNT,
             periodLength: PERIOD,
+            firstPaymentAt: 0,
             totalPayments: 12,
             termsHash: keccak256("Safe recurring subscription"),
             nonce: nonce

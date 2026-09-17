@@ -1,6 +1,6 @@
 # Supported Tokens
 
-Scope: `FixedMandate` at source revision `d13c12d`. This is a behavioral compatibility policy, **not a token allowlist or
+Scope: the current `FixedMandate` implementation. This is a behavioral compatibility policy, **not a token allowlist or
 certification of any asset or network deployment**. No production token is certified by the repository's mock-token tests.
 
 ## Required Behavior
