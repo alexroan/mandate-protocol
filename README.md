@@ -142,6 +142,10 @@ an intentional change affects gas usage.
 
 The contract is pinned to Solidity `0.8.35`. CI and the committed gas baselines use Foundry `v1.5.1`.
 
+The default suite includes real Safe **1.3.0** and **1.4.1** integration tests using published contract bytecode,
+2-of-3 owner signatures, and version-matched fallback handlers. See the [Safe test guide](./test/fixtures/safe/README.md)
+for coverage, fixture provenance, and focused test commands. No RPC endpoint or fork is required.
+
 ## Security
 
 `FixedMandate` is a shared ERC-20 spender. Integrations should use well-understood tokens, size allowances deliberately,
@@ -156,4 +160,5 @@ a vulnerability.
 
 ## License
 
-Licensed under the [MIT License](./LICENSE).
+Licensed under the [MIT License](./LICENSE). Third-party Safe test fixtures retain their
+[upstream licenses](./test/fixtures/safe/README.md#source-and-license).
