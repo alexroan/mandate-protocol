@@ -35,7 +35,7 @@ redirect the funds, or collect a payment before it unlocks.
 ## How It Works
 
 1. **Agree:** the payer authorizes the complete payment schedule and the biller accepts it.
-2. **Open:** the mandate is registered onchain, anchoring its schedule and unlocking the first payment.
+2. **Open:** the mandate is registered onchain, ready for collection from its agreed first-payment time.
 3. **Settle:** anyone can submit the exact next unlocked payment. Funds move directly from payer to recipient.
 4. **Cancel:** either the payer or biller can stop further collection.
 
@@ -74,6 +74,7 @@ payments at fixed-duration intervals over an existing ERC-20 allowance.
 The current implementation includes:
 
 - finite and open-ended schedules;
+- an optional signed first-payment timestamp, with zero meaning start on opening;
 - three opening paths for neutral, payer, or biller submission;
 - direct and signature-authorized cancellation by either party;
 - permissionless settlement of the next unlocked payment;
@@ -106,14 +107,17 @@ struct Mandate {
     address token;
     uint256 amountPerPayment;
     uint256 periodLength;
+    uint256 firstPaymentAt; // zero means start on opening
     uint256 totalPayments; // zero means open-ended
     bytes32 termsHash;
     uint256 nonce;
 }
 ```
 
-The first payment unlocks immediately when the mandate opens. Later payments unlock after each `periodLength`, measured
-in seconds from the onchain opening timestamp. A fixed duration is not the same as a calendar month.
+Set `firstPaymentAt` to a Unix timestamp to choose when collection can begin, or zero to unlock the first payment on
+opening. Later payments unlock after each `periodLength`, measured in seconds from that effective start. Opening after
+an explicit start does not reset the schedule: already-accrued payments are immediately eligible for sequential
+collection. A fixed duration is not the same as a calendar month.
 
 For the complete function surface, typed-data schemas, state machine, events, indexing requirements, and security
 boundary, read [PROTOCOL.md](./PROTOCOL.md). For the product thesis and design rationale, read the

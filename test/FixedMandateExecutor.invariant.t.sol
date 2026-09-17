@@ -7,6 +7,19 @@ import {FixedMandate} from "../src/FixedMandate.sol";
 import {IFixedMandate} from "../src/interfaces/IFixedMandate.sol";
 import {MockERC20} from "./helpers/MandateMocks.sol";
 
+library FixedMandateScheduleModel {
+    function unlocked(IFixedMandate.Mandate memory mandate, uint256 openedAt, uint256 timestamp)
+        internal
+        pure
+        returns (uint256 count)
+    {
+        uint256 firstPaymentAt = mandate.firstPaymentAt == 0 ? openedAt : mandate.firstPaymentAt;
+        if (timestamp < firstPaymentAt) return 0;
+        count = (timestamp - firstPaymentAt) / mandate.periodLength + 1;
+        if (mandate.totalPayments != 0 && count > mandate.totalPayments) count = mandate.totalPayments;
+    }
+}
+
 contract FixedMandateHandler is Test {
     FixedMandate public immutable executor;
     MockERC20 public immutable token;
@@ -30,6 +43,15 @@ contract FixedMandateHandler is Test {
         vm.warp(block.timestamp + delta);
     }
 
+    function warpToNextUnlock(uint8 rawPosition) external {
+        (,, uint256 openedAt, uint256 settledCount) = executor.mandateStates(executor.mandateId(mandate));
+        uint256 firstPaymentAt = mandate.firstPaymentAt == 0 ? openedAt : mandate.firstPaymentAt;
+        uint256 unlockAt = firstPaymentAt + settledCount * mandate.periodLength;
+        uint256 position = bound(uint256(rawPosition), 0, 2);
+        uint256 timestamp = unlockAt + position - 1;
+        if (timestamp >= block.timestamp) vm.warp(timestamp);
+    }
+
     function settleCurrent() external {
         _settleCurrent();
     }
@@ -44,8 +66,7 @@ contract FixedMandateHandler is Test {
     function _settleCurrent() internal returns (bool settled) {
         bytes32 id = executor.mandateId(mandate);
         (bool opened, bool cancelled, uint256 startedAt, uint256 beforeCount) = executor.mandateStates(id);
-        uint256 unlocked = (block.timestamp - startedAt) / mandate.periodLength + 1;
-        if (mandate.totalPayments != 0 && unlocked > mandate.totalPayments) unlocked = mandate.totalPayments;
+        uint256 unlocked = FixedMandateScheduleModel.unlocked(mandate, startedAt, block.timestamp);
         bool shouldSucceed = opened && !cancelled && beforeCount < unlocked
             && token.allowance(mandate.payer, address(executor)) >= mandate.amountPerPayment
             && token.balanceOf(mandate.payer) >= mandate.amountPerPayment;
@@ -91,8 +112,7 @@ contract FixedMandateHandler is Test {
     function settleWithoutAllowance() external {
         bytes32 id = executor.mandateId(mandate);
         (bool opened, bool cancelled, uint256 startedAt, uint256 beforeCount) = executor.mandateStates(id);
-        uint256 unlocked = (block.timestamp - startedAt) / mandate.periodLength + 1;
-        if (mandate.totalPayments != 0 && unlocked > mandate.totalPayments) unlocked = mandate.totalPayments;
+        uint256 unlocked = FixedMandateScheduleModel.unlocked(mandate, startedAt, block.timestamp);
         if (!opened || cancelled || beforeCount >= unlocked) return;
 
         uint256 payerBalanceBefore = token.balanceOf(mandate.payer);
@@ -146,7 +166,7 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
     uint256 internal constant AMOUNT = 100e6;
     uint256 internal constant INITIAL_BALANCE = 1_000_000e6;
 
-    function _setUpInvariant(uint256 totalPayments, bool includeCancellation) internal {
+    function _setUpInvariant(uint256 totalPayments, uint256 firstPaymentAt, bool includeCancellation) internal {
         payer = vm.addr(payerPk);
         biller = vm.addr(billerPk);
         executor = new FixedMandate();
@@ -160,6 +180,7 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
             token: address(token),
             amountPerPayment: AMOUNT,
             periodLength: PERIOD,
+            firstPaymentAt: firstPaymentAt,
             totalPayments: totalPayments,
             termsHash: keccak256("fixed invariant terms"),
             nonce: totalPayments
@@ -179,14 +200,15 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
         token.approve(address(executor), type(uint256).max);
 
         handler = new FixedMandateHandler(executor, token, mandate);
-        bytes4[] memory selectors = new bytes4[](includeCancellation ? 7 : 6);
+        bytes4[] memory selectors = new bytes4[](includeCancellation ? 8 : 7);
         selectors[0] = FixedMandateHandler.warpForward.selector;
         selectors[1] = FixedMandateHandler.settleCurrent.selector;
         selectors[2] = FixedMandateHandler.settleAvailable.selector;
         selectors[3] = FixedMandateHandler.settleStale.selector;
         selectors[4] = FixedMandateHandler.settleFuture.selector;
         selectors[5] = FixedMandateHandler.settleWithoutAllowance.selector;
-        if (includeCancellation) selectors[6] = FixedMandateHandler.cancelAsPayer.selector;
+        selectors[6] = FixedMandateHandler.warpToNextUnlock.selector;
+        if (includeCancellation) selectors[7] = FixedMandateHandler.cancelAsPayer.selector;
         targetContract(address(handler));
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
@@ -195,14 +217,13 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
         bytes32 id = executor.mandateId(mandate);
         (bool opened, bool cancelled, uint256 startedAt, uint256 settledCount) = executor.mandateStates(id);
         assertTrue(opened, "opened flag cleared");
-        assertEq(startedAt, START, "schedule anchor changed");
+        assertEq(startedAt, START, "opening timestamp changed");
         assertEq(cancelled, handler.ghostCancelledAtCount() != type(uint256).max, "cancellation model");
         assertEq(settledCount, handler.ghostSuccessfulSettlements(), "ghost count");
 
-        uint256 elapsedPeriods = (block.timestamp - startedAt) / mandate.periodLength;
-        uint256 unlocked = elapsedPeriods + 1;
-        if (mandate.totalPayments != 0 && unlocked > mandate.totalPayments) unlocked = mandate.totalPayments;
+        uint256 unlocked = FixedMandateScheduleModel.unlocked(mandate, START, block.timestamp);
         assertLe(settledCount, unlocked, "unlocked bound");
+        if (!cancelled) assertEq(executor.unlockedPaymentCount(mandate), unlocked, "unlocked count model");
     }
 
     function invariant_StandardTokenTransfersFullAmountAndPaysNoSubmitterReward() public view {
@@ -226,19 +247,42 @@ abstract contract FixedMandateInvariantBase is StdInvariant, Test {
 
 contract FixedMandateFiniteInvariantTest is FixedMandateInvariantBase {
     function setUp() public {
-        _setUpInvariant(12, false);
+        _setUpInvariant(12, 0, false);
     }
 }
 
 contract FixedMandateIndefiniteInvariantTest is FixedMandateInvariantBase {
     function setUp() public {
-        _setUpInvariant(0, false);
+        _setUpInvariant(0, 0, false);
+    }
+}
+
+contract FixedMandateDeferredFiniteInvariantTest is FixedMandateInvariantBase {
+    function setUp() public {
+        _setUpInvariant(12, START + PERIOD, false);
+        handler.settleCurrent();
+        assertEq(handler.ghostSuccessfulSettlements(), 0, "settled before first payment");
+    }
+}
+
+contract FixedMandateDeferredIndefiniteInvariantTest is FixedMandateInvariantBase {
+    function setUp() public {
+        _setUpInvariant(0, START + PERIOD, false);
+        handler.settleCurrent();
+        assertEq(handler.ghostSuccessfulSettlements(), 0, "settled before first payment");
+    }
+}
+
+contract FixedMandatePastAnchorInvariantTest is FixedMandateInvariantBase {
+    function setUp() public {
+        _setUpInvariant(12, START - 2 * PERIOD, false);
+        assertEq(executor.unlockedPaymentCount(mandate), 3, "arrears available at opening");
     }
 }
 
 contract FixedMandateCancellationInvariantTest is FixedMandateInvariantBase {
-    function setUp() public {
-        _setUpInvariant(0, true);
+    function setUp() public virtual {
+        _setUpInvariant(0, 0, true);
     }
 
     function invariant_CancellationFreezesSettlementCount() public view {
@@ -246,6 +290,12 @@ contract FixedMandateCancellationInvariantTest is FixedMandateInvariantBase {
         if (cancelledAt == type(uint256).max) return;
         (,,, uint256 settledCount) = executor.mandateStates(executor.mandateId(mandate));
         assertEq(settledCount, cancelledAt, "cancelled count changed");
+    }
+}
+
+contract FixedMandateDeferredCancellationInvariantTest is FixedMandateCancellationInvariantTest {
+    function setUp() public override {
+        _setUpInvariant(0, START + PERIOD, true);
     }
 }
 
@@ -276,8 +326,7 @@ contract FixedMandateMultiHandler is Test {
         IFixedMandate.Mandate memory mandate = mandates[index];
         bytes32 id = executor.mandateId(mandate);
         (bool opened, bool cancelled, uint256 startedAt, uint256 beforeCount) = executor.mandateStates(id);
-        uint256 unlocked = (block.timestamp - startedAt) / mandate.periodLength + 1;
-        if (mandate.totalPayments != 0 && unlocked > mandate.totalPayments) unlocked = mandate.totalPayments;
+        uint256 unlocked = FixedMandateScheduleModel.unlocked(mandate, startedAt, block.timestamp);
         bool shouldSucceed = opened && !cancelled && beforeCount < unlocked
             && token.balanceOf(mandate.payer) >= mandate.amountPerPayment;
 
@@ -340,6 +389,7 @@ contract FixedMandateMultiInvariantTest is StdInvariant, Test {
                 token: address(token),
                 amountPerPayment: AMOUNT * (i + 1),
                 periodLength: PERIOD * (i + 1),
+                firstPaymentAt: i == 0 ? 0 : (i == 1 ? START + PERIOD : START - 4 * PERIOD),
                 totalPayments: i == 1 ? 0 : 3 + i,
                 termsHash: keccak256(abi.encode("multi invariant terms", i)),
                 nonce: 100 + i
@@ -377,14 +427,14 @@ contract FixedMandateMultiInvariantTest is StdInvariant, Test {
 
             assertTrue(opened, "opened flag cleared");
             assertEq(cancelled, handler.ghostCancelled(i), "mandate cancellation leaked");
-            assertEq(startedAt, START, "schedule anchor changed");
+            assertEq(startedAt, START, "opening timestamp changed");
             assertEq(settledCount, modelSettled, "per-mandate settlement count");
             assertEq(token.balanceOf(mandate.recipient), modelSettled * mandate.amountPerPayment, "recipient credit");
             expectedPayerDebit += modelSettled * mandate.amountPerPayment;
 
-            uint256 unlocked = (block.timestamp - startedAt) / mandate.periodLength + 1;
-            if (mandate.totalPayments != 0 && unlocked > mandate.totalPayments) unlocked = mandate.totalPayments;
+            uint256 unlocked = FixedMandateScheduleModel.unlocked(mandate, START, block.timestamp);
             assertLe(settledCount, unlocked, "per-mandate unlock bound");
+            if (!cancelled) assertEq(executor.unlockedPaymentCount(mandate), unlocked, "per-mandate unlock model");
         }
 
         assertEq(INITIAL_BALANCE - token.balanceOf(payer), expectedPayerDebit, "aggregate payer debit");

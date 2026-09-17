@@ -6,12 +6,11 @@ import {IUnorderedNonces} from "./IUnorderedNonces.sol";
 
 /// @title Fixed Mandate Executor interface
 /// @notice Immutable ERC-20 pull-payment executor for bilateral fixed-amount mandates.
-/// @dev The executor is an independent shared ERC-20 spender. Opening sets the schedule start to the
-/// current block timestamp. Cancellation stops mandate settlement but does not revoke token allowance.
+/// @dev The executor is an independent shared ERC-20 spender. The schedule starts at `firstPaymentAt`,
+/// or the opening timestamp when zero. Cancellation stops settlement but does not revoke token allowance.
 interface IFixedMandate is IERC5267, IUnorderedNonces {
     /// @notice Fixed payment schedule authorized by a payer and accepted by a biller.
-    /// @dev The EIP-712 digest of this struct under the executor domain is the mandate id. The schedule
-    /// start is deliberately absent because the contract records it when the mandate opens.
+    /// @dev The EIP-712 digest of this struct under the executor domain is the mandate id.
     struct Mandate {
         /// @notice Token holder whose ERC-20 allowance is spent by the executor.
         address payer;
@@ -25,6 +24,9 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
         uint256 amountPerPayment;
         /// @notice Fixed interval in seconds between payment unlocks.
         uint256 periodLength;
+        /// @notice First payment unlock timestamp. Zero uses the timestamp when the mandate opens.
+        /// @dev Past timestamps are allowed: already accrued payments become collectible on opening.
+        uint256 firstPaymentAt;
         /// @notice Total number of payments. Zero represents an open-ended schedule.
         /// @dev The current implementation stores `settledPaymentCount` as `uint120`, so it can settle at most
         /// `type(uint120).max` occurrences. Positive values above that bound cannot complete.
@@ -41,7 +43,7 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
         bool opened;
         /// @notice True once the payer or biller has cancelled the mandate.
         bool cancelled;
-        /// @notice Contract-generated schedule anchor recorded when the mandate opened.
+        /// @notice Opening timestamp, also the schedule anchor when `firstPaymentAt` is zero.
         uint120 startedAt;
         /// @notice Number of payments successfully settled, also the next payment index.
         uint120 settledPaymentCount;
@@ -75,9 +77,10 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
     /// @param recipient Pinned recipient for settlement proceeds.
     /// @param amountPerPayment Exact nominal amount for each occurrence.
     /// @param periodLength Seconds between occurrence unlocks.
+    /// @param firstPaymentAt Signed first unlock timestamp, or zero to use `startedAt`.
     /// @param totalPayments Finite count, or zero for an open-ended schedule. The current implementation's
     /// `uint120` settlement counter limits successful occurrences to `type(uint120).max`.
-    /// @param startedAt Contract-generated schedule anchor.
+    /// @param startedAt Actual opening timestamp.
     /// @param nonce Payer unordered nonce consumed by this mandate.
     /// @param termsHash Offchain terms or metadata commitment.
     event MandateOpened(
@@ -88,6 +91,7 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
         address recipient,
         uint256 amountPerPayment,
         uint256 periodLength,
+        uint256 firstPaymentAt,
         uint256 totalPayments,
         uint256 startedAt,
         uint256 nonce,
@@ -127,7 +131,8 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
     event CancellationNonceConsumed(address indexed authorizer, uint256 indexed cancelNonce);
 
     /// @notice Opens a fixed mandate using payer authorization and biller acceptance.
-    /// @dev Any caller may submit. Successful opening records `block.timestamp` as the schedule start.
+    /// @dev Any caller may submit. Opening records `block.timestamp`, used as the schedule start only
+    /// when `firstPaymentAt` is zero. An explicit timestamp is unchanged by delayed submission.
     /// @param mandate Full fixed terms authorized by payer and accepted by biller.
     /// @param payerSignatureDeadline Expiry for the payer authorization.
     /// @param billerSignatureDeadline Expiry for the biller acceptance.
@@ -247,14 +252,14 @@ interface IFixedMandate is IERC5267, IUnorderedNonces {
     /// @notice Returns the number of payment occurrences unlocked for an opened mandate.
     /// @dev Reverts for an unopened or cancelled mandate.
     /// @param mandate Opened, uncancelled fixed mandate terms.
-    /// @return count Number of occurrences unlocked since the generated start, capped for finite schedules.
+    /// @return count Zero before the first unlock, otherwise accrued occurrences capped for finite schedules.
     function unlockedPaymentCount(Mandate calldata mandate) external view returns (uint256 count);
 
     /// @notice Returns stored lifecycle and settlement state for a mandate id.
     /// @param id Fixed mandate id to query.
     /// @return opened True once the mandate has been opened.
     /// @return cancelled True once payer or biller has cancelled the mandate.
-    /// @return startedAt Contract-generated schedule anchor.
+    /// @return startedAt Opening timestamp, also the schedule anchor when `firstPaymentAt` is zero.
     /// @return settledPaymentCount Number of successfully settled occurrences.
     function mandateStates(bytes32 id)
         external

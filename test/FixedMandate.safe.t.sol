@@ -37,6 +37,7 @@ abstract contract FixedMandateSafeTest is SafeFixture {
             recipient,
             AMOUNT,
             PERIOD,
+            0,
             12,
             START,
             257,
@@ -100,6 +101,97 @@ abstract contract FixedMandateSafeTest is SafeFixture {
         assertEq(token.balanceOf(relayer), 0, "keeper cannot redirect funds");
     }
 
+    function test_RelayedSafeMandateCannotSettleUntilSignedFirstPaymentDate() public {
+        IFixedMandate.Mandate memory mandate = _mandate(1);
+        mandate.firstPaymentAt = START + PERIOD;
+        assertTrue(
+            _execSafe(
+                payerSafe,
+                address(token),
+                abi.encodeCall(MockERC20.approve, (address(executor), 12 * AMOUNT)),
+                Enum.Operation.Call
+            )
+        );
+        _open(mandate);
+        _assertState(mandate, true, false, 0);
+        assertEq(executor.unlockedPaymentCount(mandate), 0);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 0);
+
+        vm.warp(mandate.firstPaymentAt - 1);
+        assertEq(executor.unlockedPaymentCount(mandate), 0);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 0);
+        _assertState(mandate, true, false, 0);
+        assertEq(token.balanceOf(address(payerSafe)), 100_000e6);
+        assertEq(token.balanceOf(recipient), 0);
+        assertEq(token.allowance(address(payerSafe), address(executor)), 12 * AMOUNT);
+
+        vm.warp(mandate.firstPaymentAt);
+        assertEq(executor.unlockedPaymentCount(mandate), 1);
+        vm.prank(relayer);
+        executor.settle(mandate, 0);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 1);
+
+        vm.warp(mandate.firstPaymentAt + PERIOD - 1);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 1);
+        vm.warp(mandate.firstPaymentAt + PERIOD);
+        assertEq(executor.unlockedPaymentCount(mandate), 2);
+        vm.prank(relayer);
+        executor.settle(mandate, 1);
+
+        _assertState(mandate, true, false, 2);
+        assertEq(token.balanceOf(address(payerSafe)), 100_000e6 - 2 * AMOUNT);
+        assertEq(token.balanceOf(recipient), 2 * AMOUNT);
+        assertEq(token.allowance(address(payerSafe), address(executor)), 10 * AMOUNT);
+        assertEq(payerSafe.nonce(), 1, "only token approval requires a Safe transaction");
+        assertEq(billerSafe.nonce(), 0, "opening signatures need no Safe transaction");
+    }
+
+    function test_SafePayerBatchesApprovalAndOpeningWithDeferredFirstPayment() public {
+        IFixedMandate.Mandate memory mandate = _mandate(1);
+        mandate.firstPaymentAt = START + PERIOD;
+        assertTrue(_execBatch(payerSafe, _approvalAndOpening(mandate)));
+        _assertState(mandate, true, false, 0);
+        assertEq(executor.unlockedPaymentCount(mandate), 0);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 0);
+
+        vm.warp(mandate.firstPaymentAt);
+        vm.prank(relayer);
+        executor.settle(mandate, 0);
+        _assertState(mandate, true, false, 1);
+        assertEq(token.balanceOf(recipient), AMOUNT);
+        assertEq(payerSafe.nonce(), 1, "no second Safe transaction at the payment date");
+        assertEq(billerSafe.nonce(), 0);
+    }
+
+    function test_ChangingFirstPaymentDateInvalidatesEachSafeOpeningSignature() public {
+        IFixedMandate.Mandate memory mandate = _mandate(1);
+        mandate.firstPaymentAt = START + PERIOD;
+        bytes32 originalId = executor.mandateId(mandate);
+        bytes memory payerSignature = _safeSign(payerSafe, executor.hashMandateAuthorization(mandate, DEADLINE));
+        bytes memory billerSignature = _safeSign(billerSafe, executor.hashMandateAcceptance(mandate, DEADLINE));
+
+        mandate.firstPaymentAt = 0;
+        assertNotEq(executor.mandateId(mandate), originalId, "the first date is part of the mandate identity");
+        bytes memory changedPayerSignature = _safeSign(payerSafe, executor.hashMandateAuthorization(mandate, DEADLINE));
+        bytes memory changedBillerSignature = _safeSign(billerSafe, executor.hashMandateAcceptance(mandate, DEADLINE));
+        vm.expectRevert(IFixedMandate.InvalidSignature.selector);
+        executor.openMandate(mandate, DEADLINE, DEADLINE, payerSignature, changedBillerSignature);
+        vm.expectRevert(IFixedMandate.InvalidSignature.selector);
+        executor.openMandate(mandate, DEADLINE, DEADLINE, changedPayerSignature, billerSignature);
+        _assertState(mandate, false, false, 0);
+        assertEq(executor.nonceBitmap(address(payerSafe), 0), 0, "tampering does not consume the opening nonce");
+
+        mandate.firstPaymentAt = START + PERIOD;
+        executor.openMandate(mandate, DEADLINE, DEADLINE, payerSignature, billerSignature);
+        _assertState(mandate, true, false, 0);
+        assertEq(executor.unlockedPaymentCount(mandate), 0);
+    }
+
     function test_SafeBillerOpensDirectlyUsingPayerThresholdSignature() public {
         IFixedMandate.Mandate memory mandate = _mandate(1);
         bytes memory signature = _safeSign(payerSafe, executor.hashMandateAuthorization(mandate, DEADLINE));
@@ -112,6 +204,28 @@ abstract contract FixedMandateSafeTest is SafeFixture {
             )
         );
         _assertState(mandate, true, false, 0);
+        assertEq(billerSafe.nonce(), 1);
+        assertEq(payerSafe.nonce(), 0);
+    }
+
+    function test_SafeBillerOpensDeferredMandateUsingPayerThresholdSignature() public {
+        IFixedMandate.Mandate memory mandate = _mandate(1);
+        mandate.firstPaymentAt = START + PERIOD;
+        bytes memory signature = _safeSign(payerSafe, executor.hashMandateAuthorization(mandate, DEADLINE));
+        assertTrue(
+            _execSafe(
+                billerSafe,
+                address(executor),
+                abi.encodeCall(FixedMandate.openMandateAsBiller, (mandate, DEADLINE, signature)),
+                Enum.Operation.Call
+            )
+        );
+        _assertState(mandate, true, false, 0);
+        assertEq(executor.unlockedPaymentCount(mandate), 0);
+        vm.expectRevert(IFixedMandate.PaymentNotUnlocked.selector);
+        executor.settle(mandate, 0);
+        vm.warp(mandate.firstPaymentAt);
+        assertEq(executor.unlockedPaymentCount(mandate), 1);
         assertEq(billerSafe.nonce(), 1);
         assertEq(payerSafe.nonce(), 0);
     }

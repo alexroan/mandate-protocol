@@ -1,6 +1,6 @@
 # Trust Model
 
-Scope: `FixedMandate` at source revision `d13c12d`. This describes the current implementation, not an audit certification.
+Scope: the current `FixedMandate` implementation, including signed first-payment timing, not an audit certification.
 See [invariants](invariants.md) for properties and [known issues](known-issues.md) for unresolved limitations.
 
 ## Authority And Funds
@@ -45,9 +45,11 @@ See [signature verification](../src/Signatures.sol), [executor entry points](../
 
 ## Timing, Availability, And Ordering
 
-Opening records the executing block's timestamp and immediately unlocks the first occurrence. A submitter holding the
-necessary signatures can choose when to submit within their deadlines; no fixed start time is signed. Block production,
-transaction inclusion, timestamp behavior, and finality are chain assumptions, not executor guarantees.
+Opening records the executing block's timestamp as `startedAt`. The signed `firstPaymentAt` selects the schedule anchor;
+zero instead uses `startedAt` and immediately unlocks index zero on opening. A nonzero future timestamp unlocks nothing
+early; opening after a past timestamp makes accrued occurrences eligible immediately. The opener cannot shift an
+explicit anchor, but can influence a zero-selected anchor by choosing when to submit within signature deadlines.
+Block production, transaction inclusion, timestamp behavior, and finality are chain assumptions, not executor guarantees.
 
 Anyone may collect all accrued occurrences sequentially, including in one transaction through an external caller.
 No offchain grace period, preferred keeper, retry policy, or merchant instruction restricts this right. Token callbacks
@@ -64,9 +66,9 @@ expire, token policy can block transfers, and users can lack funds or allowance.
 ## Integration Responsibilities And Evidence
 
 UIs and relayers have no special contract authority, but users trust them to display accurate terms, amounts, addresses,
-deadlines, and aggregate exposure. `termsHash` is only a nonzero commitment: the executor neither retrieves its content
-nor enforces delivery, refunds, disputes, or commercial promises. Indexers must authenticate executor logs and handle
-reorgs; successful outer smart-wallet transactions do not necessarily mean their inner Mandate call succeeded.
+first-payment timing, deadlines, and aggregate exposure. `termsHash` is only a nonzero commitment: the executor neither
+retrieves its content nor enforces delivery, refunds, disputes, or commercial promises. Indexers must authenticate
+executor logs and handle reorgs; successful outer smart-wallet transactions do not necessarily mean their inner Mandate call succeeded.
 
 [Safe integration tests](../test/fixtures/safe/README.md) deploy real Safe **1.3.0 and 1.4.1** bytecode locally with
 version-matched handlers and initially 2-of-3 EOA owners. They cover signature and direct-transaction flows, policy changes,

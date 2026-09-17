@@ -1,7 +1,7 @@
 # Invariants
 
-Scope: `FixedMandate`, `UnorderedNonces`, and `Signatures` at baseline
-`d13c12d`. These are implementation properties and review targets, not a formal
+Scope: the current `FixedMandate`, `UnorderedNonces`, and `Signatures`, including
+signed first-payment timing. These are implementation properties and review targets, not a formal
 proof. Sources: [executor](../src/FixedMandate.sol),
 [nonces](../src/UnorderedNonces.sol), [signatures](../src/Signatures.sol), and
 [interface](../src/interfaces/IFixedMandate.sol).
@@ -13,10 +13,12 @@ proof. Sources: [executor](../src/FixedMandate.sol),
   accepts the digest at execution time, not necessarily that an owner signed it.
 - Time never moves backwards within the canonical execution history. Opening
   occurs at a timestamp no greater than `type(uint120).max`; otherwise the
-  unchecked narrowing cast truncates the stored start time.
+  unchecked narrowing cast truncates the stored opening time.
 - For an opened mandate, `s` is `startedAt`, `p` is its positive `periodLength`,
   `n` is `totalPayments`, `c` is `settledPaymentCount`, and `t >= s` is the current
-  timestamp. Let `M = 2^256 - 1` and `C = 2^120 - 1`.
+  timestamp. The effective anchor `a` is signed `firstPaymentAt` when nonzero,
+  otherwise `s`; it may precede or follow opening. Let `M = 2^256 - 1` and
+  `C = 2^120 - 1`.
 - Token balance guarantees additionally require the behavior in
   [supported tokens](supported-tokens.md). A successful token call is not proof
   of an economic transfer. See [trust model](trust-model.md).
@@ -46,6 +48,7 @@ proof. Sources: [executor](../src/FixedMandate.sol),
 
 5. **Lifecycle is one-way.** Each ID opens at most once; `opened` never clears,
    `startedAt` never changes, and `cancelled` can only change from false to true.
+   `startedAt` records actual opening time regardless of the signed anchor.
    Opening itself neither transfers tokens nor consumes a payment occurrence.
 6. **One opening per payer nonce.** A successful opening sets exactly the nonce's
    bit in the payer's bitmap. Bits only change from zero to one, whether consumed
@@ -68,17 +71,23 @@ proof. Sources: [executor](../src/FixedMandate.sol),
 For an opened mandate, the unlocked count is mathematically equivalent to:
 
 ```text
-elapsed = floor((t - s) / p)
+U(t)    = 0                       if t < a
+
+otherwise:
+elapsed = floor((t - a) / p)
 base    = min(elapsed + 1, M)       // mathematical addition, not uint256 overflow
 U(t)    = base                     if n == 0
           min(base, n)            otherwise
 ```
 
-9. **Unlocks accumulate.** The first occurrence unlocks at `s`, then one each
-   `p` seconds. Missed occurrences remain available without expiry; finite
+9. **Unlocks accumulate from the agreed anchor.** Nothing unlocks before `a`;
+   the first occurrence unlocks at `a`, then one each `p` seconds. Zero starts on
+   opening; a past explicit timestamp may expose multiple accrued occurrences
+   immediately on opening. Missed occurrences remain available without expiry; finite
    schedules never unlock more than `n`. The public getter rejects unopened or
    cancelled mandates. For cancelled mandates, the formula is a mathematical
-   schedule, not a right to collect. Unopened mandates have no schedule anchor.
+   schedule, not a right to collect. An unopened mandate may specify an explicit
+   anchor, but cannot settle and has no stored opening timestamp.
 10. **Sequential consumption.** Every successful settlement invocation requires
     an open, uncancelled mandate, `nextPaymentIndex == c`, and `c < U(t)`. It
     increments the counter before interacting with the token. Thus `0 <= c <= C`
@@ -118,14 +127,17 @@ deltas nor enforces these economic properties against a malicious token.
 | 1-4 | [Unit suite](../test/FixedMandateExecutor.t.sol): `test_DomainSeparatorAndCanonicalTypedData`, `test_RevertWhen_SignaturesTargetAnotherChainOrFixedExecutor`, `test_RevertWhen_ECDSASignaturesBypassERC1271Policy`, `test_AttackerCannotCancelBySubstitutingThemselfAsMandateParty`. |
 | 5-7 | Unit suite: `testFuzz_SameNonceCannotOpenDifferentFixedMandates`, `testFuzz_NonceInvalidationIsMonotonicAndOwnerScoped`, `test_SameAddressPayerAndBillerShareCancellationNonceNamespace`, `test_ExpiredMalformedAndFailedCancellationDoNotConsumeNonce`. |
 | 8-10 | Unit suite: `test_CancellationBlocksAccruedAndFuturePayments`, `test_PaymentUnlocksExactlyAtEachBoundary`, `testFuzz_SettlementTransitionsMatchScheduleModel`, `test_UnlockedCountSaturatesAtUintMax`. |
+| First-payment timing and binding | Unit suite: `test_DeferredScheduleBoundariesCatchUpAndFiniteCap`, `test_PastFirstPaymentAtAllowsFiniteCatchUpOnOpening`, `test_FirstPaymentAtSupportsFullUint256Range`, `testFuzz_FirstPaymentAtIsBoundByBothParties`. |
 | 11-12 | Unit suite: `test_SettlementUsesExactlyOneTransferFrom`, `test_CallbackSubmitterCanSettleNextUnlockedOccurrence`, `test_CallbackCannotReplayCurrentPaymentIndex`, `test_CallbackCannotRedirectPayment`, `test_OuterTransferFailureRollsBackNestedStateAndEvents`. |
 | 5, 8-10, 13 and token accounting | [Stateful suites](../test/FixedMandateExecutor.invariant.t.sol): `FixedMandateFiniteInvariantTest`, `FixedMandateIndefiniteInvariantTest`, `FixedMandateCancellationInvariantTest`, `FixedMandateMultiInvariantTest`. |
+| Deferred and accrued schedules | Stateful suites: `FixedMandateDeferredFiniteInvariantTest`, `FixedMandateDeferredIndefiniteInvariantTest`, `FixedMandatePastAnchorInvariantTest`, `FixedMandateDeferredCancellationInvariantTest`; the multi-mandate suite mixes zero, future, and past anchors. |
 | Wallet authorization and nonce ownership | [Opening/settlement Safe suites](../test/FixedMandate.safe.t.sol) and [cancellation Safe suites](../test/FixedMandate.safe.cancellation.t.sol), each instantiated for real Safe 1.3.0 and 1.4.1 with matching handlers. See [fixture scope](../test/fixtures/safe/README.md). |
 | Conditional economics | Unit suite: `test_UnsupportedTokenEconomicsRemainExplicit`, `test_PayerRecipientSelfTransferConsumesAllowanceWithoutChangingNetBalance`, `testFuzz_PermissionlessSettlementTransfersFullAmount`. |
 
 Tests provide bounded evidence, not exhaustive proof. Stateful handlers use
 standard mock tokens, bounded forward time, one or three pre-opened mandates,
 and direct payer cancellation; they do not model arbitrary callbacks or wallet
-policies. Timestamp fuzzing covers `uint64`, not the `uint120` cast boundary.
+policies. Opening-timestamp fuzzing covers `uint64`, not the `uint120` cast boundary;
+explicit signed first-payment timestamps have separate full-width coverage.
 The counter's `uint120` overflow boundary and cancellation during a token callback
 currently have no dedicated tests. See [known issues](known-issues.md).

@@ -50,9 +50,11 @@ require the next sequential payment index
 stop this mandate when the payer or biller cancels it
 ```
 
-Opening generates the schedule start and unlocks the first occurrence immediately. Each elapsed period unlocks another
-occurrence. An unlocked occurrence does not expire: missed payments remain available for sequential catch-up until the
-mandate is cancelled. Any address may cause every unlocked occurrence, including arrears, to be collected immediately.
+The signed `firstPaymentAt` sets the schedule start; zero selects the actual opening timestamp instead. No payment
+unlocks before that effective start, and each elapsed period unlocks another occurrence after index zero. Opening after
+an explicit start makes accrued occurrences eligible immediately. An unlocked occurrence does not expire: missed payments
+remain available for sequential catch-up until the mandate is cancelled. Any address may cause every unlocked occurrence,
+including arrears, to be collected immediately.
 Offchain grace periods, pause requests, retry pacing, and preferred-operator policies are not enforced by the contract.
 Cancellation does not revoke the underlying token allowance.
 
@@ -99,7 +101,7 @@ recorded only as factual event provenance; it is not a signed protocol role.
 
 | Getter | Meaning |
 |---|---|
-| `mandateStates(bytes32)` | Open/cancel flags, generated `startedAt`, and `settledPaymentCount`. |
+| `mandateStates(bytes32)` | Open/cancel flags, actual opening timestamp `startedAt`, and `settledPaymentCount`. |
 | `nonceBitmap(address,uint248)` | Per-owner unordered opening-nonce bitmap. |
 | `cancellationNonceUsed(address,uint256)` | Per-authorizer cancellation-signature replay protection. |
 
@@ -120,6 +122,7 @@ struct Mandate {
     address token;
     uint256 amountPerPayment;
     uint256 periodLength;
+    uint256 firstPaymentAt;
     uint256 totalPayments;
     bytes32 termsHash;
     uint256 nonce;
@@ -130,6 +133,7 @@ Validation rules are:
 
 - `payer`, `biller`, `recipient`, and `token` must be nonzero;
 - `amountPerPayment` and `periodLength` must be nonzero;
+- `firstPaymentAt == 0` starts the schedule on opening; any nonzero Unix timestamp is accepted, including past dates;
 - `totalPayments == 0` selects an open-ended schedule, while a positive value is the intended finite count, subject to
   the implementation limit below;
 - `termsHash` must be nonzero and commits to offchain terms or metadata; and
@@ -139,7 +143,7 @@ The contract intentionally permits other address relationships, including payer 
 the rules above hold.
 
 The `mandateId` is the EIP-712 digest of `Mandate` under this contract's domain. It is chain-specific and
-deployment-specific. The generated schedule start is deliberately absent from the signed struct.
+deployment-specific. `firstPaymentAt` is signed; the actual opening timestamp is generated and stored separately.
 
 ### Fixed Mandate State
 
@@ -152,7 +156,8 @@ struct MandateState {
 }
 ```
 
-`startedAt` is set to `block.timestamp` when opening succeeds. `settledPaymentCount` is both the number of successfully
+`startedAt` is set to `block.timestamp` when opening succeeds. It remains the opening timestamp even when a nonzero
+`firstPaymentAt` selects a different schedule anchor. `settledPaymentCount` is both the number of successfully
 settled occurrences and the only valid next payment index. Opening and cancellation are permanent flags; finite
 schedule completion is derived from the signed total and settled count rather than stored as a separate state.
 
@@ -183,7 +188,7 @@ replace only the calling party's signature with transaction authority:
 - `openMandateAsBiller` requires `msg.sender == mandate.biller` and verifies payer authorization.
 
 All routes validate the same mandate, consume the same payer nonce, derive the same id, store the current timestamp as
-the schedule anchor, and emit the same `MandateOpened` event. Opening signatures are not route-bound: an ordinary
+`startedAt`, and emit the same `MandateOpened` event. Opening signatures are not route-bound: an ordinary
 counterparty signature can be paired with the corresponding direct route.
 
 ```mermaid
@@ -218,9 +223,11 @@ sequenceDiagram
 Opening does not check token balance or allowance. A mandate may open before the payer funds the account or approves
 `FixedMandate`; settlement fails later if a required token transfer cannot execute.
 
-Because `startedAt` is generated, a neutral holder of both signatures can choose when to seek inclusion while both
-signatures remain valid. The block producer supplies the confirmed block timestamp that becomes the anchor. A signature
-is valid at its exact deadline and expires once `block.timestamp > signatureDeadline`.
+With `firstPaymentAt == 0`, a neutral holder of both signatures can affect the schedule anchor by choosing when to seek
+inclusion while both signatures remain valid. The block producer supplies the confirmed opening timestamp. A nonzero
+`firstPaymentAt` fixes the anchor independently of submission timing: opening early does not unlock payments early,
+and opening late exposes the accrued backlog without shifting later unlocks. Signature deadlines limit submission,
+not the schedule start. A signature is valid at its exact deadline and expires once `block.timestamp > signatureDeadline`.
 
 All creation routes produce identical stored and event state. To distinguish which route was used, an indexer needs the
 selector of the `FixedMandate` call frame. The top-level transaction selector is sufficient only when the contract
@@ -249,23 +256,29 @@ Typed objects are:
 The canonical base and nested opening type strings are:
 
 ```text
-Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 firstPaymentAt,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
 
-MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+MandateAuthorization(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 firstPaymentAt,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
 
-MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
+MandateAcceptance(Mandate mandate,uint256 signatureDeadline)Mandate(address payer,address biller,address recipient,address token,uint256 amountPerPayment,uint256 periodLength,uint256 firstPaymentAt,uint256 totalPayments,bytes32 termsHash,uint256 nonce)
 ```
 
 Their type hashes are:
 
 ```text
-Mandate:              0x2cb7e3a6ce71ea54f5b22fa6a91ad500901576ca2e0bb109f23a0000ed803418
-MandateAuthorization: 0xf9d6fb0adbc3b16b07a472bbfadd3bebbd4c55774935ad15d79ec25e3b656fc2
-MandateAcceptance:    0xe2b64c471e9c56916489f2a1e58382e9d165717620a0a17467ade21ee66f3752
+Mandate:              0x89d63de216ad332f859acc6defed4a7e7d6189c2a2cef92bdfb616225a9a26d6
+MandateAuthorization: 0x2735ca87342fac0d85a3408ef46722e3d0cff1fa3d7beca21d5d101ccdeeffe0
+MandateAcceptance:    0x8308cdd26190442e1b451873b86b95e0aa92a2cae922742035716302d3d16b1b
 ```
 
 The nested opening wrappers commit to every `Mandate` field. Any change to payer, biller, recipient, token, amount,
-cadence, finite count, `termsHash`, or nonce changes the digest.
+cadence, first-payment timestamp, finite count, `termsHash`, or nonce changes the digest.
+
+Adding `firstPaymentAt` changes the mandate tuple ABI, opening-event signature, and the three type hashes above.
+Integrations must regenerate calldata, typed data, and event decoders; signatures for the previous nine-field schema
+are incompatible. The domain remains `FixedMandate`, version `1`, and the `Cancellation` type is unchanged, but its
+mandate ID now commits to the new schema. Existing immutable deployments do not gain this behavior. The changed creation
+bytecode also changes the deployment script's CREATE2 address, even with the same deployer and salt.
 
 Contract accounts are validated exclusively through ERC-1271. This includes code-bearing delegated accounts, so a bare
 ECDSA recovery cannot bypass their account policy. Addresses without code use ECDSA validation and additionally support
@@ -293,9 +306,11 @@ stateDiagram-v2
 Opening-nonce invalidation is not a mandate state. It ORs a caller-supplied mask into the nonce bitmap; any previously
 unset selected bit then blocks a mandate using that nonce from opening.
 
-There is no pending-start or expiry state. Opening anchors the schedule and unlocks index `0` immediately. A finite
-mandate within the supported count range stops unlocking after `totalPayments`, but unpaid occurrences remain
-collectible while it is open. Once every finite occurrence is settled, the mandate remains opened but no further index
+There is no separately stored pending-start or expiry state. An opened mandate with a future `firstPaymentAt` has zero
+unlocked payments and can already be cancelled. Zero selects immediate index-zero unlock on opening. A past explicit
+start exposes any accrued payments once opened. A finite mandate within the supported count range stops unlocking after
+`totalPayments`, but unpaid occurrences remain collectible while it is open. Once every finite occurrence is settled,
+the mandate remains opened but no further index
 can pass the unlock/count check. An open-ended mandate continues unlocking until cancellation, subject to the
 implementation limit documented above.
 
@@ -316,7 +331,7 @@ sequenceDiagram
     E->>E: Derive mandateId and load state
     E->>E: Require opened and not cancelled
     E->>E: Require nextPaymentIndex == settledPaymentCount
-    E->>E: Derive unlocked count from startedAt and periodLength
+    E->>E: Resolve firstPaymentAt or startedAt, then derive unlocked count
     E->>E: Require index is unlocked and below finite total
     E->>E: Increment settledPaymentCount
     E-->>I: Emit PaymentSettled with submitter provenance
@@ -346,9 +361,10 @@ If an outer transfer ultimately fails, all nested state, logs, and transfers rol
 therefore logged before any later index reached through its token callback. Logs for one mandate remain ordered by
 `paymentIndex`, and rollback removes all affected logs if a later transfer fails.
 
-Because settlement is permissionless, any actor may collect index `0` as soon as opening succeeds and may collect all
-unpaid unlocked arrears sequentially without waiting for an offchain instruction. Grace periods, preferred transaction
-submitters, retry intervals, dunning states, and pause requests are coordination conventions only. Onchain collection
+Because settlement is permissionless, any actor may collect index `0` once the mandate is open and its effective start
+has been reached, and may collect all unpaid unlocked arrears sequentially without waiting for an offchain instruction.
+Grace periods, preferred transaction submitters, retry intervals, dunning states, and pause requests are coordination
+conventions only. Onchain collection
 is blocked only by the protocol checks, cancellation, insufficient balance or allowance, or token failure.
 
 ## Cancellation
@@ -430,10 +446,15 @@ execution fee.
 
 ## Unlock Schedule
 
-The contract stores `startedAt = block.timestamp` on opening. At any later timestamp, the uncapped unlocked count is:
+The contract stores `startedAt = block.timestamp` on opening. `startedAt` is opening metadata, not necessarily the
+schedule anchor. For an opened mandate, calculate the unlocked count from the signed terms:
 
 ```text
-uncappedUnlocked = floor((block.timestamp - startedAt) / periodLength) + 1
+effectiveStart = firstPaymentAt == 0 ? startedAt : firstPaymentAt
+if block.timestamp < effectiveStart:
+    uncappedUnlocked = 0
+else:
+    uncappedUnlocked = floor((block.timestamp - effectiveStart) / periodLength) + 1
 ```
 
 For a finite schedule:
@@ -442,8 +463,15 @@ For a finite schedule:
 unlockedPaymentCount = min(uncappedUnlocked, totalPayments)
 ```
 
-When `totalPayments == 0`, the uncapped count is used. Index `0` is unlocked at `startedAt`; index `i` unlocks at
-`startedAt + i * periodLength`.
+When `totalPayments == 0`, the uncapped count is used. The mathematical count is saturated at `type(uint256).max` rather
+than overflowing. Index `0` unlocks at `effectiveStart`; index `i` unlocks at `effectiveStart + i * periodLength`, if that
+timestamp is reachable. No collection can occur before the mandate actually opens.
+
+For example, a mandate opened on September 17 with `firstPaymentAt` set to October 1 at 00:00 UTC has no unlocked
+payments until that timestamp. With a 30-day period, indices zero and one unlock on October 1 and October 31 respectively.
+Opening the same signed schedule on November 2 instead makes both eligible immediately without moving later unlocks.
+Setting `firstPaymentAt` to zero instead starts the schedule at the actual opening timestamp. This is fixed-duration
+scheduling; it does not provide calendar-month or month-end rules.
 
 Settlement requires both:
 
@@ -453,8 +481,8 @@ nextPaymentIndex < unlockedPaymentCount
 ```
 
 Each call settles one occurrence. If three occurrences are unlocked and unpaid, three sequential calls may settle them
-in the same block. There is no settlement window, minimum delay, absolute end, or expiration. A finite schedule stops
-accruing after its count, while its unpaid unlocked occurrences remain collectible by anyone until cancellation.
+in the same block. There is no settlement window, delay between already-unlocked payments, absolute end, or expiration.
+A finite schedule stops accruing after its count, while its unpaid unlocked occurrences remain collectible by anyone until cancellation.
 Offchain pacing cannot delay an unlocked occurrence. Periods are fixed-duration seconds, not calendar months.
 
 ## Nonces
@@ -496,6 +524,7 @@ event MandateOpened(
     address recipient,
     uint256 amountPerPayment,
     uint256 periodLength,
+    uint256 firstPaymentAt,
     uint256 totalPayments,
     uint256 startedAt,
     uint256 nonce,
@@ -520,7 +549,7 @@ event CancellationNonceConsumed(address indexed authorizer, uint256 indexed canc
 
 | Event | Indexed fields | Meaning |
 |---|---|---|
-| `MandateOpened` | `mandateId`, `payer`, `biller` | A mandate opened. Non-indexed data contains every remaining signed field plus generated `startedAt`. |
+| `MandateOpened` | `mandateId`, `payer`, `biller` | A mandate opened. Non-indexed data contains every remaining signed field plus actual opening timestamp `startedAt`. |
 | `PaymentSettled` | `mandateId`, `paymentIndex`, `payer` | One occurrence settled. Data records biller, recipient, token, amount per payment, and immediate submitter. |
 | `MandateCancellation` | `mandateId`, `payer`, `cancelledBy` | Payer or biller authorized cancellation. |
 | `CancellationNonceConsumed` | `authorizer`, `cancelNonce` | Records the authorizer-scoped nonce consumed by signed cancellation, before `MandateCancellation`. |
@@ -529,10 +558,11 @@ event CancellationNonceConsumed(address indexed authorizer, uint256 indexed canc
 `EIP712DomainChanged` is inherited through `IERC5267`. The contract's domain is immutable, so this implementation never
 emits it.
 
-`MandateOpened` contains every `Mandate` field and the generated schedule anchor, so an event-only consumer can
-reconstruct the mandate without transaction calldata. Route provenance additionally requires the selector of the
-`FixedMandate` call frame; for smart-account or router transactions that may require a trace or decoded nested
-execution.
+`MandateOpened` contains every `Mandate` field, including the original signed `firstPaymentAt`, and the actual opening
+timestamp `startedAt`. An event-only consumer can reconstruct the mandate and resolve its effective schedule anchor
+without transaction calldata. Do not replace a signed zero with `startedAt` when reconstructing the mandate: that
+changes its ID. Route provenance additionally requires the selector of the `FixedMandate` call frame; for smart-account
+or router transactions that may require a trace or decoded nested execution.
 
 For settlement, the event is emitted after the counter increments and before token interactions. This makes logs from
 nested settlements appear in ascending `paymentIndex` order. Indexers may process that order directly, but should still
@@ -594,6 +624,7 @@ Cancellation stops one mandate; allowance revocation stops every pull from that 
 `FixedMandate` deployment. Wallets and dashboards should display at least:
 
 - exact amount per payment;
+- signed first-payment time, whether it uses opening time, and the effective schedule start;
 - currently unlocked but unpaid occurrence count and nominal exposure;
 - next unlock time;
 - remaining finite occurrences or the fact that the schedule is open-ended;
@@ -603,9 +634,11 @@ Cancellation stops one mandate; allowance revocation stops every pull from that 
 
 ### Integration Guidance
 
-Integrations must encode the exact nine-field `Mandate` schema and use the deployed contract address and current chain
+Integrations must encode the exact ten-field `Mandate` schema and use the deployed contract address and current chain
 in the EIP-712 domain. Before presenting a signature, they should make the amount per payment, cadence, finite or
-open-ended count, immediate first unlock, permissionless collection, and arrears exposure explicit.
+open-ended count, first-payment time, permissionless collection, and arrears exposure explicit. A future start permits
+opening and approval in advance; a past start may create immediately collectible arrears. There is no requirement that
+the first-payment time precede the signature deadline: the deadline controls opening, not later collection.
 
 A transaction service should read `settledPaymentCount` and the unlocked count immediately before submitting. A stale
 index reverts rather than consuming a later occurrence, so competing services should treat `UnexpectedPaymentIndex` as
@@ -634,7 +667,7 @@ The current contract does not implement:
 - recipient registry or recipient rotation;
 - privacy or omnibus settlement;
 - SDK, typed-data generation helpers, wallet display helpers, indexer, dashboard, or merchant API; or
-- a signed future start or collection deadline.
+- a collection deadline.
 
 These belong in periphery or product layers unless the core trust boundary is deliberately changed.
 
@@ -687,8 +720,8 @@ For future agents:
 - treat `WHITEPAPER-WIP.md` as the product thesis and protocol framing;
 - preserve the three explicit opening routes and their shared payer nonce semantics unless creation is deliberately
   redesigned;
-- preserve the generated start, immediate first unlock, sequential next-index rule, finite/open-ended count semantics,
-  permissionless submission, and one transfer of the full amount to the pinned recipient;
+- preserve the signed first-payment time with zero selecting opening time, sequential next-index rule,
+  finite/open-ended count semantics, permissionless submission, and one transfer of the full amount to the pinned recipient;
 - preserve `PaymentSettled` emission after index consumption and before token interactions so callback logs remain
   index-ordered;
 - treat `PaymentSettled.submitter` as factual provenance only, never as protocol authority or a payment recipient;
